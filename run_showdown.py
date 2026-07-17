@@ -48,8 +48,11 @@ PRICING = {
 MODELS = {
     "kimi-k3": {"display": "Kimi K3", "max_tokens": 100000, "retries": 12},
     "claude-opus-4-8-think": {"display": "Claude Opus 4.8", "max_tokens": 100000},
+    # effort is ONLY effective via /v1/responses — chat/completions silently
+    # drops reasoning_effort for this model (verified by 3x3 A/B test)
     "gpt-5.6-sol": {"display": "GPT-5.6 Sol", "max_tokens": 100000,
-                    "params": {"reasoning_effort": "max"}},
+                    "endpoint": "responses",
+                    "params": {"reasoning": {"effort": "max"}}},
     # non-thinking / substitute channels — NOT in the default lineup,
     # pick explicitly via --models
     "claude-opus-4-8": {"display": "Claude Opus 4.8", "lineup": False},
@@ -82,8 +85,93 @@ def build_user_content(prompt, ep_dir):
     return parts
 
 
+def to_responses_input(content):
+    """Convert chat-style user content into Responses-API input parts."""
+    if isinstance(content, str):
+        return content
+    parts = []
+    for p in content:
+        if p["type"] == "text":
+            parts.append({"type": "input_text", "text": p["text"]})
+        elif p["type"] == "image_url":
+            parts.append({"type": "input_image", "image_url": p["image_url"]["url"]})
+    return [{"role": "user", "content": parts}]
+
+
+def call_model_responses(model, prompt, label):
+    """Same contract as call_model, but via /v1/responses (needed where
+    reasoning effort is only honored on this endpoint)."""
+    cfg = MODELS.get(model, {})
+    payload = {
+        "model": model,
+        "input": to_responses_input(prompt),
+        "max_output_tokens": cfg.get("max_tokens", DEFAULT_MAX_TOKENS),
+        "stream": True,
+    }
+    payload.update(cfg.get("params", {}))
+    req = urllib.request.Request(
+        GATEWAY.replace("/chat/completions", "/responses"),
+        data=json.dumps(payload).encode(),
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {API_KEY}",
+            "Accept": "text/event-stream",
+        },
+    )
+    text, usage, status, err = [], {}, None, None
+    chunks = 0
+    t0 = time.time()
+    next_beat = t0 + HEARTBEAT_S
+    with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT_S) as resp:
+        for raw in resp:
+            now = time.time()
+            if now >= next_beat:
+                print(f"[{label}] streaming(responses)… {chunks} events, "
+                      f"{sum(len(c) for c in text)} content chars, "
+                      f"{now - t0:.0f}s elapsed", flush=True)
+                next_beat = now + HEARTBEAT_S
+            line = raw.decode("utf-8", "replace").strip()
+            if not line.startswith("data:"):
+                continue
+            try:
+                ev = json.loads(line[5:].strip())
+            except ValueError:
+                continue
+            chunks += 1
+            etype = ev.get("type", "")
+            if etype == "response.output_text.delta":
+                text.append(ev.get("delta") or "")
+            elif etype in ("response.completed", "response.incomplete", "response.failed"):
+                r = ev.get("response") or {}
+                status = r.get("status")
+                u = r.get("usage") or {}
+                usage = {
+                    "prompt_tokens": u.get("input_tokens", 0),
+                    "completion_tokens": u.get("output_tokens", 0),
+                    "total_tokens": u.get("total_tokens", 0),
+                    "completion_tokens_details": u.get("output_tokens_details") or {},
+                }
+                if etype == "response.failed":
+                    err = (r.get("error") or {}).get("message", "response.failed")
+            elif etype == "error":
+                err = ev.get("message", "stream error")
+    if err:
+        return {"error": {"message": err}}
+    finish = {"completed": "stop", "incomplete": "length"}.get(status, status)
+    return {
+        "model": model,
+        "usage": usage,
+        "choices": [{
+            "message": {"role": "assistant", "content": "".join(text)},
+            "finish_reason": finish,
+        }],
+    }
+
+
 def call_model(model, prompt, label):
     """Stream the completion (SSE) and reassemble an OpenAI-style response dict."""
+    if MODELS.get(model, {}).get("endpoint") == "responses":
+        return call_model_responses(model, prompt, label)
     payload = {
         "model": model,
         "messages": [{"role": "user", "content": prompt}],
