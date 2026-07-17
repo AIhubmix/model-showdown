@@ -34,6 +34,7 @@ PRICING = {
     "coding-kimi-k3": (3.0, 15.0),  # list price; the coding channel bills differently
     "claude-opus-4-8": (5.0, 25.0),
     "claude-opus-4-8-think": (5.0, 25.0),
+    "claude-fable-5": (10.0, 50.0),
     "gpt-5.6-sol": (5.0, 30.0),
 }
 
@@ -46,16 +47,20 @@ PRICING = {
 #   gpt-5.6-sol gets reasoning_effort=max, its top tier (verified effective on chat/completions)
 # "params" is merged verbatim into the request payload.
 MODELS = {
-    "kimi-k3": {"display": "Kimi K3", "max_tokens": 100000, "retries": 12},
+    "kimi-k3": {"display": "Kimi K3", "max_tokens": 160000, "retries": 12},
     "claude-opus-4-8-think": {"display": "Claude Opus 4.8", "max_tokens": 100000},
     # effort is ONLY effective via /v1/responses — chat/completions silently
     # drops reasoning_effort for this model (verified by 3x3 A/B test)
     "gpt-5.6-sol": {"display": "GPT-5.6 Sol", "max_tokens": 100000,
                     "endpoint": "responses",
                     "params": {"reasoning": {"effort": "max"}}},
-    # non-thinking / substitute channels — NOT in the default lineup,
+    # non-thinking / substitute / guest contestants — NOT in the default lineup,
     # pick explicitly via --models
     "claude-opus-4-8": {"display": "Claude Opus 4.8", "lineup": False},
+    # Fable 5: adaptive reasoning; request a large native thinking budget
+    # (param accepted by the gateway; effectiveness not yet A/B-verified)
+    "claude-fable-5": {"display": "Claude Fable 5", "max_tokens": 100000, "lineup": False,
+                       "params": {"thinking": {"type": "enabled", "budget_tokens": 60000}}},
     "coding-kimi-k3": {"display": "Kimi K3", "max_tokens": 100000,
                        "retries": 8, "lineup": False},
 }
