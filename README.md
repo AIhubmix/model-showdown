@@ -87,12 +87,21 @@ badge). Any model id served by your OpenAI-compatible gateway works:
 
 ```python
 MODELS = {
-    "kimi-k3":        {"display": "Kimi K3", "max_tokens": 100000, "retries": 12},
-    "claude-opus-4-8": {"display": "Claude Opus 4.8"},
-    "gpt-5.6-sol":    {"display": "GPT-5.6 Sol"},
+    # default lineup — every model at its max reasoning mode
+    "kimi-k3": {"display": "Kimi K3", "max_tokens": 100000, "retries": 12},
+    "claude-opus-4-8-think": {"display": "Claude Opus 4.8", "max_tokens": 100000},
+    "gpt-5.6-sol": {"display": "GPT-5.6 Sol", "max_tokens": 100000,
+                    "params": {"reasoning_effort": "max"}},   # merged into the payload
+    # configured but excluded from the default lineup; pick via --models
+    "claude-opus-4-8": {"display": "Claude Opus 4.8", "lineup": False},
 }
-PRICING = {"kimi-k3": (3.0, 15.0), "claude-opus-4-8": (5.0, 25.0), "gpt-5.6-sol": (5.0, 30.0)}
+PRICING = {"kimi-k3": (3.0, 15.0), "claude-opus-4-8-think": (5.0, 25.0), "gpt-5.6-sol": (5.0, 30.0)}
 ```
+
+Before trusting a reasoning knob, verify it actually works on your gateway: run the
+same nontrivial question with and without the parameter and compare
+`usage.completion_tokens_details.reasoning_tokens` — some gateways silently accept
+unknown parameters, so acceptance alone proves nothing.
 
 Brand logo and tagline are composition props (`video/src/Root.tsx` defaults) —
 swap in your own.

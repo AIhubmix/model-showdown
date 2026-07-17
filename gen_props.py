@@ -16,7 +16,7 @@ title = sys.argv[2] if len(sys.argv) > 2 else "Model Showdown"
 subtitle = sys.argv[3] if len(sys.argv) > 3 else ""
 ep = os.path.basename(ep_dir)
 
-ORDER = ["kimi-k3", "coding-kimi-k3", "claude-opus-4-8", "gpt-5.6-sol"]
+ORDER = ["kimi-k3", "coding-kimi-k3", "claude-opus-4-8-think", "claude-opus-4-8", "gpt-5.6-sol"]
 # short names for the narrow panel header; full names stay in title/subtitle
 SHORT = {"Claude Opus 4.8": "Opus 4.8", "GPT-5.6 Sol": "GPT-5.6 Sol"}
 

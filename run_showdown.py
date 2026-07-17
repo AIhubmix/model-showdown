@@ -33,18 +33,26 @@ PRICING = {
     "kimi-k3": (3.0, 15.0),
     "coding-kimi-k3": (3.0, 15.0),  # list price; the coding channel bills differently
     "claude-opus-4-8": (5.0, 25.0),
+    "claude-opus-4-8-think": (5.0, 25.0),
     "gpt-5.6-sol": (5.0, 30.0),
 }
 
 # display name, max_tokens override (K3 always thinks at max effort — reasoning
 # eats the budget). No fallback channels: the badge must reflect the real model
 # (coding-* channels bill differently and would misrepresent identity/cost).
+# Default lineup = every model at its MAX reasoning mode:
+#   kimi-k3 always reasons at max effort (not configurable)
+#   claude-opus-4-8-think is the thinking variant of Opus 4.8
+#   gpt-5.6-sol gets reasoning_effort=max, its top tier (verified effective on chat/completions)
+# "params" is merged verbatim into the request payload.
 MODELS = {
     "kimi-k3": {"display": "Kimi K3", "max_tokens": 100000, "retries": 12},
-    "claude-opus-4-8": {"display": "Claude Opus 4.8"},
-    "gpt-5.6-sol": {"display": "GPT-5.6 Sol"},
-    # bench substitute channel — configured but NOT in the default lineup
-    # (lineup: False). Use explicitly via --models when the primary is down.
+    "claude-opus-4-8-think": {"display": "Claude Opus 4.8", "max_tokens": 100000},
+    "gpt-5.6-sol": {"display": "GPT-5.6 Sol", "max_tokens": 100000,
+                    "params": {"reasoning_effort": "max"}},
+    # non-thinking / substitute channels — NOT in the default lineup,
+    # pick explicitly via --models
+    "claude-opus-4-8": {"display": "Claude Opus 4.8", "lineup": False},
     "coding-kimi-k3": {"display": "Kimi K3", "max_tokens": 100000,
                        "retries": 8, "lineup": False},
 }
@@ -83,6 +91,7 @@ def call_model(model, prompt, label):
         "stream": True,
         "stream_options": {"include_usage": True},
     }
+    payload.update(MODELS.get(model, {}).get("params", {}))
     req = urllib.request.Request(
         GATEWAY,
         data=json.dumps(payload).encode(),
