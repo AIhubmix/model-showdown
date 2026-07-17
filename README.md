@@ -113,6 +113,15 @@ draft posts.
   cp -r .claude/skills/showdown ~/.claude/skills/
   ```
 
+One-line usage examples — name models and reference images right in the request,
+or name none to run the full default lineup:
+
+```
+/showdown pit kimi-k3 against gpt-5.6 on a 3D pinball sim
+/showdown recreate this screenshot as a playable game, ref: ~/shots/level.png
+/showdown weekly episode: particle fluid simulation, all models
+```
+
 ## Full episode workflow
 
 The quickstart above covers the automated 80%. A full episode has a few human
