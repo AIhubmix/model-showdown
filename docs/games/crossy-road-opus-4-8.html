@@ -1,0 +1,597 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Crossy Chicken</title>
+<style>
+  html,body{margin:0;padding:0;background:#181828;height:100%;}
+  body{display:flex;align-items:center;justify-content:center;min-height:100vh;font-family:monospace;}
+  #wrap{position:relative;}
+  canvas{display:block;background:#2b8a3e;image-rendering:pixelated;box-shadow:0 0 40px #000;border-radius:6px;}
+</style>
+</head>
+<body>
+<div id="wrap">
+<canvas id="c" width="720" height="960"></canvas>
+</div>
+<script>
+(function(){
+const canvas=document.getElementById('c');
+const ctx=canvas.getContext('2d');
+const W=720,H=960;
+const TILE=80;
+const COLS=9; // playfield columns (0..8), tile width = 80
+const OFFSET_X=(W-COLS*TILE)/2; // 0
+// Row coordinate: row 0 at start, increasing upward.
+// World rows are generated procedurally.
+
+// ---------- Utility ----------
+function rand(a,b){return a+Math.random()*(b-a);}
+function randi(a,b){return Math.floor(rand(a,b));}
+function choice(arr){return arr[randi(0,arr.length)];}
+function clamp(v,a,b){return v<a?a:v>b?b:v;}
+
+// ---------- Lane generation ----------
+// lane types: 'grass','road','river','rail'
+let lanes={}; // row -> lane object
+const carColors=['#e03131','#1971c2','#f08c00','#ae3ec9','#2f9e44'];
+
+function makeLane(row){
+  if(row<=2){ // start area grass, safe
+    return {type:'grass',row,trees:new Set()};
+  }
+  // choose type weighted
+  let prev=lanes[row-1];
+  let r=Math.random();
+  let type;
+  if(r<0.42) type='grass';
+  else if(r<0.72) type='road';
+  else if(r<0.90) type='river';
+  else type='rail';
+  // avoid too many rivers in a row awkwardly; okay for demo
+  if(type==='grass'){
+    let trees=new Set();
+    for(let c=0;c<COLS;c++){
+      if(Math.random()<0.18) trees.add(c);
+    }
+    // ensure at least one clear column so player can advance
+    let clear=[];
+    for(let c=0;c<COLS;c++) if(!trees.has(c)) clear.push(c);
+    if(clear.length===0) trees.delete(randi(0,COLS));
+    return {type:'grass',row,trees};
+  }
+  if(type==='road'){
+    let dir=Math.random()<0.5?-1:1;
+    let speed=rand(60,140);
+    let big=Math.random()<0.4;
+    let objs=[];
+    // spawn cars spaced along an extended range
+    let count=randi(2,4);
+    let spacing=W/count;
+    for(let i=0;i<count;i++){
+      let len= big? TILE*1.8: TILE*0.9;
+      objs.push({x:i*spacing+rand(0,spacing*0.4),len,big,color:choice(carColors)});
+    }
+    return {type:'road',row,dir,speed,objs};
+  }
+  if(type==='river'){
+    let dir=Math.random()<0.5?-1:1;
+    let speed=rand(45,90);
+    let objs=[];
+    let count=randi(2,4);
+    let spacing=W/count;
+    for(let i=0;i<count;i++){
+      let len=TILE*(randi(2,4));
+      objs.push({x:i*spacing+rand(0,spacing*0.3),len});
+    }
+    return {type:'river',row,dir,speed,objs};
+  }
+  // rail
+  return {type:'rail',row,dir:Math.random()<0.5?-1:1,
+    timer:rand(2,5),state:'idle',warnTime:1.6,trainX:0,trainSpeed:900};
+}
+
+function getLane(row){
+  if(!lanes[row]) lanes[row]=makeLane(row);
+  return lanes[row];
+}
+
+// ---------- Player ----------
+let player, camY, score, best=0, gameOver, mode, autoTimer, restartTimer;
+let hop; // hop animation state
+
+function resetGame(auto){
+  lanes={};
+  for(let r=0;r<=2;r++) lanes[r]={type:'grass',row:r,trees:new Set()};
+  player={col:4,row:2,px:4*TILE+TILE/2,py:0,onLog:null,logOffset:0};
+  camY=0;
+  score=0;
+  gameOver=false;
+  mode=auto?'auto':'human';
+  hop={t:1,fromX:player.px,fromY:0,toX:player.px,toY:0};
+  restartTimer=0;
+  aiCooldown=0;
+  // pregenerate ahead
+  for(let r=3;r<40;r++) getLane(r);
+}
+
+// world y for a given row (top of world). Higher row => smaller y (up).
+// We'll place row 0 near bottom. Row world Y center:
+function rowWorldY(row){ return -row*TILE; } // negative goes up
+
+// convert world Y to screen: screenY = worldY - camY + baseScreen
+// We want player near lower portion. Let base so that player's row sits around y=640
+const PLAYER_SCREEN_Y=640;
+function screenYOf(worldY){ return worldY - camY + PLAYER_SCREEN_Y; }
+
+// ---------- Movement ----------
+function tryMove(dcol,drow){
+  if(gameOver) return;
+  if(hop.t<1) return; // still hopping
+  let ncol=clamp(player.col+dcol,0,COLS-1);
+  let nrow=player.row+drow;
+  if(nrow<0) nrow=0;
+  // check target lane obstacles (trees block)
+  let lane=getLane(nrow);
+  if(lane.type==='grass' && lane.trees.has(ncol)){
+    return; // blocked
+  }
+  // if not moving (blocked at edge), skip
+  if(ncol===player.col && nrow===player.row) return;
+  // start hop
+  player.onLog=null;
+  let fromX=player.px, fromY=rowWorldY(player.row);
+  player.col=ncol;
+  player.row=nrow;
+  let toX=ncol*TILE+TILE/2;
+  let toY=rowWorldY(nrow);
+  hop={t:0,fromX,fromY,toX,toY};
+  if(player.row>score) score=player.row;
+}
+
+// keyboard
+window.addEventListener('keydown',e=>{
+  let used=true;
+  if(mode==='auto' && (e.key.startsWith('Arrow'))){ mode='human'; }
+  if(gameOver) return;
+  switch(e.key){
+    case 'ArrowUp': tryMove(0,1); break;
+    case 'ArrowDown': tryMove(0,-1); break;
+    case 'ArrowLeft': tryMove(-1,0); break;
+    case 'ArrowRight': tryMove(1,0); break;
+    default: used=false;
+  }
+  if(used) e.preventDefault();
+},{passive:false});
+
+// ---------- AI ----------
+let aiCooldown=0;
+function aiThink(dt){
+  aiCooldown-=dt;
+  if(aiCooldown>0) return;
+  if(hop.t<1) return;
+  // current lane check: if on river & no log riding and about to leave? handled by movement.
+  // Decide: try to move up if safe.
+  let cur=getLane(player.row);
+  // If currently on a road/river tile that is dangerous NOW-ish, we mostly move forward.
+  let targetRow=player.row+1;
+  let targetLane=getLane(targetRow);
+  let col=player.col;
+
+  function upSafe(){
+    if(targetLane.type==='grass') return !targetLane.trees.has(col);
+    if(targetLane.type==='road') return roadColSafe(targetLane,col,1.4);
+    if(targetLane.type==='rail') return railSafe(targetLane,1.2);
+    if(targetLane.type==='river') return riverColHasLog(targetLane,col);
+    return true;
+  }
+  function sideOption(dir){
+    let c=col+dir;
+    if(c<0||c>=COLS) return false;
+    let l=cur;
+    if(l.type==='grass') return !l.trees.has(c);
+    if(l.type==='road') return roadColSafe(l,c,1.4);
+    if(l.type==='rail') return railSafe(l,1.2);
+    if(l.type==='river') return riverColHasLog(l,c);
+    return true;
+  }
+
+  // If on a river, prefer staying safe / move to log
+  if(cur.type==='river' && !riverColHasLog(cur,col)){
+    // danger - need to find adjacent log
+    if(riverColHasLog(cur,col+1)){ tryMove(1,0); aiCooldown=0.16; return;}
+    if(riverColHasLog(cur,col-1)){ tryMove(-1,0); aiCooldown=0.16; return;}
+  }
+
+  if(upSafe()){
+    tryMove(0,1);
+    aiCooldown=0.16;
+    return;
+  }
+  // try sidestep to find a safer up next
+  // look for column where up is safe
+  for(let d of [1,-1]){
+    let c=col+d;
+    if(c<0||c>=COLS) continue;
+    if(!sideOption(d)) continue;
+    // will up be safe from there?
+    let ok;
+    if(targetLane.type==='grass') ok=!targetLane.trees.has(c);
+    else if(targetLane.type==='road') ok=roadColSafe(targetLane,c,1.4);
+    else if(targetLane.type==='river') ok=riverColHasLog(targetLane,c);
+    else if(targetLane.type==='rail') ok=railSafe(targetLane,1.2);
+    else ok=true;
+    if(ok){ tryMove(d,0); aiCooldown=0.16; return; }
+  }
+  // just wait
+  aiCooldown=0.1;
+}
+
+function roadColSafe(lane,col,margin){
+  // check if any car overlaps the column center now or within predicted margin
+  let cx=col*TILE+TILE/2;
+  for(let o of lane.objs){
+    let x=o.x;
+    // predict a little ahead
+    let ahead=lane.dir*lane.speed*0.4;
+    let lo=Math.min(x,x+ahead)-o.len/2 - TILE*0.5*margin;
+    let hi=Math.max(x,x+ahead)+o.len/2 + TILE*0.5*margin;
+    // wrap awareness: check normal
+    if(cx>lo && cx<hi) return false;
+  }
+  return true;
+}
+function riverColHasLog(lane,col){
+  let cx=col*TILE+TILE/2;
+  for(let o of lane.objs){
+    if(cx>o.x-o.len/2 && cx<o.x+o.len/2) return true;
+  }
+  return false;
+}
+function railSafe(lane,margin){
+  if(lane.state==='idle') return true;
+  return false; // warning or passing = not safe
+}
+
+// ---------- Update ----------
+let last=performance.now();
+let started=false;
+function loop(now){
+  let dt=(now-last)/1000; if(dt>0.05)dt=0.05; last=now;
+  update(dt);
+  render();
+  requestAnimationFrame(loop);
+}
+
+function update(dt){
+  if(!started) return;
+  // Update lane objects (moving) for visible range
+  let minRow=Math.floor((camY-PLAYER_SCREEN_Y-H)/-TILE)-2;
+  let maxRow=Math.floor((camY-PLAYER_SCREEN_Y+H)/-TILE)+2;
+  // generate ahead of player
+  for(let r=player.row-6;r<player.row+18;r++){ if(r>=0) getLane(r); }
+  for(let key in lanes){
+    let lane=lanes[key];
+    if(lane.type==='road'||lane.type==='river'){
+      for(let o of lane.objs){
+        o.x+=lane.dir*lane.speed*dt;
+        // wrap
+        if(lane.dir>0 && o.x-o.len/2>W) o.x=-o.len/2;
+        if(lane.dir<0 && o.x+o.len/2<0) o.x=W+o.len/2;
+      }
+    } else if(lane.type==='rail'){
+      updateRail(lane,dt);
+    }
+  }
+
+  // AI
+  if(mode==='auto' && !gameOver) aiThink(dt);
+
+  // hop animation
+  if(hop.t<1){
+    hop.t=Math.min(1,hop.t+dt*7);
+    let e=hop.t;
+    player.px=hop.fromX+(hop.toX-hop.fromX)*e;
+    // vertical world position handled by camera; we track py as hop height
+  }
+
+  // River log riding: if player on river lane and hop finished
+  if(hop.t>=1 && !gameOver){
+    let lane=getLane(player.row);
+    if(lane.type==='river'){
+      // find log under player
+      let riding=null;
+      for(let o of lane.objs){
+        if(player.px>o.x-o.len/2 && player.px<o.x+o.len/2){riding=o;break;}
+      }
+      if(riding){
+        player.px+=lane.dir*lane.speed*dt;
+        player.col=Math.round((player.px-TILE/2)/TILE);
+        if(player.px<0||player.px>W){ die(); }
+      } else {
+        // drown
+        die();
+      }
+    } else if(lane.type==='road'){
+      // collision
+      let cx=player.px;
+      for(let o of lane.objs){
+        if(cx>o.x-o.len/2 && cx<o.x+o.len/2){ die(); break; }
+      }
+    } else if(lane.type==='rail'){
+      if(lane.state==='passing'){
+        // check train overlap across the row (train spans full width when passing)
+        die();
+      }
+    }
+  }
+
+  // Camera follows player upward
+  let targetCam = rowWorldY(player.row); // negative
+  // camera should move so player stays; camY tracks worldY of player
+  // We define camY so that screenY of player row = PLAYER_SCREEN_Y always,
+  // but only scroll UP (never back down below furthest).
+  let desired = rowWorldY(player.row);
+  // Only allow camera to go more negative (up)
+  if(desired<camY) camY=desired;
+  // smooth
+  camY += (desired-camY)*Math.min(1,dt*6)*0; // keep locked (no smoothing to avoid drift)
+  camY = Math.min(camY, rowWorldY(player.row)); // ensure not below player
+
+  // Actually smoothly move camera toward the furthest advance
+  let camTarget=rowWorldY(Math.max(player.row, maxReachedRow()));
+  camY += (camTarget - camY)*Math.min(1,dt*5);
+
+  // Death by falling behind: if player's screen position goes below bottom
+  let pScreenY=screenYOf(rowWorldY(player.row));
+  if(pScreenY>H-40 && !gameOver){
+    die();
+  }
+
+  // restart timer
+  if(gameOver){
+    restartTimer-=dt;
+    if(restartTimer<=0){ resetGame(true); }
+  }
+}
+
+let _maxReached=2;
+function maxReachedRow(){ if(player.row>_maxReached)_maxReached=player.row; return _maxReached;}
+
+function updateRail(lane,dt){
+  if(lane.state==='idle'){
+    lane.timer-=dt;
+    if(lane.timer<=0){ lane.state='warning'; lane.timer=lane.warnTime; }
+  } else if(lane.state==='warning'){
+    lane.timer-=dt;
+    if(lane.timer<=0){
+      lane.state='passing';
+      lane.trainX=lane.dir>0?-TILE*4:W+TILE*4;
+      lane.trainLen=TILE*4;
+    }
+  } else if(lane.state==='passing'){
+    lane.trainX+=lane.dir*lane.trainSpeed*dt;
+    if((lane.dir>0 && lane.trainX-lane.trainLen/2>W)||(lane.dir<0 && lane.trainX+lane.trainLen/2<0)){
+      lane.state='idle'; lane.timer=rand(3,6);
+    }
+  }
+}
+
+function die(){
+  if(gameOver) return;
+  gameOver=true;
+  if(score>best) best=score;
+  restartTimer=2;
+}
+
+// ---------- Render ----------
+function laneBaseColor(lane,row){
+  if(lane.type==='grass') return (row%2===0)?'#4bb549':'#43a944';
+  if(lane.type==='road') return '#3a3a44';
+  if(lane.type==='river') return '#1c6fb5';
+  if(lane.type==='rail') return '#5a4a3a';
+  return '#000';
+}
+
+function render(){
+  ctx.clearRect(0,0,W,H);
+  // draw lanes from bottom to top
+  let topRow=Math.floor((camY-PLAYER_SCREEN_Y - H)/(-TILE))+2;
+  let botRow=Math.floor((camY-PLAYER_SCREEN_Y + 0)/(-TILE))-2;
+  // determine visible rows
+  let startRow=Math.max(0,Math.floor((-(camY)-PLAYER_SCREEN_Y)/TILE)-2);
+  // Simpler: iterate rows whose screenY in [-TILE, H]
+  let rowsToDraw=[];
+  for(let r=Math.max(0,player.row-14);r<player.row+16;r++){
+    let sy=screenYOf(rowWorldY(r));
+    if(sy>-TILE && sy<H+TILE) rowsToDraw.push(r);
+  }
+  // draw
+  for(let r of rowsToDraw){
+    let lane=getLane(r);
+    let sy=screenYOf(rowWorldY(r))-TILE/2; // top of tile
+    // base
+    ctx.fillStyle=laneBaseColor(lane,r);
+    ctx.fillRect(0,sy,W,TILE);
+    if(lane.type==='road'){
+      // dashed center line
+      ctx.fillStyle='#e9e28a';
+      for(let x=0;x<W;x+=48){ ctx.fillRect(x+8,sy+TILE/2-3,24,6); }
+    }
+    if(lane.type==='rail'){
+      // ties + rails
+      ctx.fillStyle='#3a2f22';
+      for(let x=0;x<W;x+=32){ctx.fillRect(x+6,sy+8,10,TILE-16);}
+      ctx.fillStyle='#888';
+      ctx.fillRect(0,sy+TILE*0.32,W,6);
+      ctx.fillRect(0,sy+TILE*0.62,W,6);
+      // warning light
+      if(lane.state==='warning'){
+        let on=(Math.floor(performance.now()/200)%2)===0;
+        ctx.fillStyle=on?'#ff2020':'#661010';
+        ctx.beginPath();ctx.arc(W-30,sy+20,10,0,7);ctx.fill();
+        ctx.fillStyle=on?'#ff2020':'#661010';
+        ctx.beginPath();ctx.arc(30,sy+20,10,0,7);ctx.fill();
+      }
+    }
+  }
+  // second pass: objects (so they overlay base but under player appropriately)
+  for(let r of rowsToDraw){
+    let lane=getLane(r);
+    let sy=screenYOf(rowWorldY(r))-TILE/2;
+    if(lane.type==='grass'){
+      for(let c of lane.trees){ drawTree(c*TILE+TILE/2, sy); }
+    } else if(lane.type==='river'){
+      for(let o of lane.objs){ drawLog(o.x, sy, o.len); }
+    } else if(lane.type==='road'){
+      for(let o of lane.objs){ drawCar(o.x, sy, o.len, o.color, lane.dir, o.big); }
+    } else if(lane.type==='rail'){
+      if(lane.state==='passing'){ drawTrain(lane.trainX, sy, lane.trainLen); }
+    }
+  }
+
+  // player
+  drawPlayer();
+
+  // HUD
+  drawHUD();
+
+  if(gameOver) drawGameOver();
+}
+
+function drawTree(cx,topY){
+  ctx.fillStyle='#5c3a1e';
+  ctx.fillRect(cx-8,topY+TILE-30,16,26);
+  ctx.fillStyle='#256b2b';
+  ctx.fillRect(cx-26,topY+6,52,44);
+  ctx.fillStyle='#2e8034';
+  ctx.fillRect(cx-18,topY+2,36,20);
+}
+function drawLog(cx,topY,len){
+  let y=topY+16;
+  ctx.fillStyle='#7a4a24';
+  ctx.fillRect(cx-len/2,y,len,TILE-32);
+  ctx.fillStyle='#8f5a2c';
+  ctx.fillRect(cx-len/2,y+6,len,8);
+  ctx.fillStyle='#5c3618';
+  ctx.fillRect(cx-len/2,y,10,TILE-32);
+  ctx.fillRect(cx+len/2-10,y,10,TILE-32);
+}
+function drawCar(cx,topY,len,color,dir,big){
+  let y=topY+18;
+  let h=TILE-36;
+  ctx.fillStyle=color;
+  ctx.fillRect(cx-len/2,y,len,h);
+  // window
+  ctx.fillStyle='#cfe8ff';
+  if(big){
+    ctx.fillStyle='#dddddd';
+    ctx.fillRect(cx-len/2, y, len*0.35, h);
+    ctx.fillStyle='#cfe8ff';
+    let wx=dir>0?cx-len/2+len*0.02:cx+len/2-len*0.1;
+    ctx.fillRect(wx,y+6,len*0.1,h*0.4);
+  }else{
+    ctx.fillRect(cx-len*0.25,y+5,len*0.5,h*0.4);
+  }
+  // lights
+  ctx.fillStyle='#ffe066';
+  let lx=dir>0?cx+len/2-6:cx-len/2;
+  ctx.fillRect(lx,y+h-8,6,6);
+}
+function drawTrain(cx,topY,len){
+  let y=topY+8;
+  let h=TILE-16;
+  ctx.fillStyle='#c92a2a';
+  ctx.fillRect(cx-len/2,y,len,h);
+  ctx.fillStyle='#222';
+  ctx.fillRect(cx-len/2,y,len,8);
+  ctx.fillStyle='#ffd43b';
+  for(let i=0;i<len/40;i++){ctx.fillRect(cx-len/2+10+i*40,y+18,24,20);}
+}
+
+function drawPlayer(){
+  let sy=screenYOf(rowWorldY(player.row));
+  // hop arc height
+  let hh=0;
+  if(hop.t<1){ hh=Math.sin(hop.t*Math.PI)*22; }
+  let px=player.px;
+  let py=sy-hh;
+  // shadow
+  ctx.fillStyle='rgba(0,0,0,0.28)';
+  ctx.beginPath();
+  ctx.ellipse(px,sy+18,20,8,0,0,7);ctx.fill();
+  // body (chicken)
+  let s=1+(hh/60);
+  let bw=34*s, bh=30*s;
+  ctx.fillStyle='#f5f5f5';
+  ctx.fillRect(px-bw/2,py-bh/2,bw,bh);
+  // head
+  ctx.fillStyle='#ffffff';
+  ctx.fillRect(px-10,py-bh/2-14,20,16);
+  // comb
+  ctx.fillStyle='#e03131';
+  ctx.fillRect(px-8,py-bh/2-20,16,6);
+  // beak
+  ctx.fillStyle='#f08c00';
+  ctx.fillRect(px+8,py-bh/2-8,8,6);
+  // eye
+  ctx.fillStyle='#222';
+  ctx.fillRect(px+2,py-bh/2-10,4,4);
+  // feet
+  ctx.fillStyle='#f08c00';
+  ctx.fillRect(px-10,py+bh/2-2,6,6);
+  ctx.fillRect(px+4,py+bh/2-2,6,6);
+}
+
+function drawHUD(){
+  ctx.fillStyle='rgba(0,0,0,0.35)';
+  ctx.fillRect(0,0,W,60);
+  ctx.fillStyle='#fff';
+  ctx.font='bold 34px monospace';
+  ctx.textBaseline='middle';
+  ctx.textAlign='left';
+  ctx.fillText('SCORE '+score,16,30);
+  ctx.textAlign='right';
+  ctx.fillText('BEST '+best,W-16,30);
+  if(mode==='auto'){
+    ctx.textAlign='center';
+    let on=(Math.floor(performance.now()/400)%2)===0;
+    ctx.fillStyle=on?'#ffd43b':'#c99a10';
+    ctx.fillRect(W/2-46,10,92,40);
+    ctx.fillStyle='#222';
+    ctx.font='bold 26px monospace';
+    ctx.fillText('AUTO',W/2,32);
+  }
+}
+
+function drawGameOver(){
+  ctx.fillStyle='rgba(0,0,0,0.55)';
+  ctx.fillRect(0,0,W,H);
+  ctx.fillStyle='#1e2233';
+  ctx.fillRect(W/2-200,H/2-140,400,280);
+  ctx.strokeStyle='#ffd43b';ctx.lineWidth=4;
+  ctx.strokeRect(W/2-200,H/2-140,400,280);
+  ctx.textAlign='center';
+  ctx.fillStyle='#ff6b6b';
+  ctx.font='bold 46px monospace';
+  ctx.fillText('GAME OVER',W/2,H/2-80);
+  ctx.fillStyle='#fff';
+  ctx.font='bold 32px monospace';
+  ctx.fillText('Score: '+score,W/2,H/2-20);
+  ctx.fillText('Best: '+best,W/2,H/2+20);
+  ctx.fillStyle='#ffd43b';
+  ctx.font='bold 24px monospace';
+  ctx.fillText('Auto-restart in '+Math.ceil(restartTimer)+'...',W/2,H/2+80);
+}
+
+// ---------- Start ----------
+resetGame(true);
+requestAnimationFrame(loop);
+// begin auto-play 1 second after load
+setTimeout(()=>{ started=true; last=performance.now(); },1000);
+
+})();
+</script>
+</body>
+</html>

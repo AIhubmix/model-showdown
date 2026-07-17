@@ -19,10 +19,10 @@
   .wrap { max-width: 1080px; margin: 0 auto; }
   .kicker { color: var(--muted); font-family: "SF Mono", Menlo, monospace; letter-spacing: 3px; font-size: 13px; }
   h1 { font-size: 40px; font-weight: 800; margin: 12px 0 8px; }
-  .sub { color: var(--muted); font-size: 17px; max-width: 640px; line-height: 1.55; }
-  h2 { font-size: 22px; font-weight: 800; margin: 48px 0 6px; }
-  .task { color: var(--muted); font-size: 14px; margin-bottom: 18px; }
-  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px; }
+  .sub { color: var(--muted); font-size: 17px; max-width: 680px; line-height: 1.55; }
+  h2 { font-size: 26px; font-weight: 800; margin: 56px 0 4px; }
+  .task { color: var(--muted); font-size: 14.5px; margin-bottom: 16px; max-width: 680px; line-height: 1.5; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px; margin-top: 18px; }
   a.card {
     display: block; background: var(--card); border: 1px solid var(--line);
     border-radius: 16px; padding: 18px; text-decoration: none; color: var(--text);
@@ -37,8 +37,8 @@
   .time { color: var(--muted); padding: 2px 0; }
   .note { margin-top: 10px; color: var(--muted); font-size: 13.5px; line-height: 1.45; }
   .play { margin-top: 12px; font-size: 13px; font-weight: 700; color: #7dd3fc; }
-  video { width: 100%; max-width: 720px; border-radius: 16px; border: 1px solid var(--line); margin-top: 8px; display: block; }
-  footer { margin-top: 64px; color: var(--muted); font-size: 14px; border-top: 1px solid var(--line); padding-top: 20px; line-height: 1.6; }
+  video { width: 100%; border-radius: 16px; border: 1px solid var(--line); margin-top: 8px; display: block; }
+  footer { margin-top: 72px; color: var(--muted); font-size: 14px; border-top: 1px solid var(--line); padding-top: 20px; line-height: 1.6; }
   footer a { color: #7dd3fc; }
 </style>
 </head>
@@ -46,56 +46,86 @@
 <div class="wrap">
   <div class="kicker">SAME PROMPT · ONE SHOT · REAL COSTS</div>
   <h1>The Model Arena</h1>
-  <video src="media/ep07-wide-clean.mp4" autoplay muted loop playsinline controls></video>
-  <p class="sub" style="margin-top:20px">We gave three frontier models the same prompt — build a Fruit Ninja–style
-  slicer as one self-contained HTML file, with an itemized art checklist and a reference
-  screenshot — one shot each, thinking modes on where available. Every game below is the
-  model's raw output, untouched, and starts playing itself. Click a card to play.
-  Cost badges are computed from actual token usage.</p>
+  <p class="sub">We give frontier models the same prompt, one shot each, thinking modes on where
+  available. Each round below: the side-by-side cut on top, the real numbers underneath,
+  and every artifact playable — untouched, exactly as generated. Cost badges are computed
+  from actual token usage.</p>
 
-  <h2>Play them yourself</h2>
-  <p class="task">Each card opens the model's raw output — it starts playing itself.</p>
+  <h2>Round 1 · Fruit Ninja</h2>
+  <p class="task">Build a Fruit Ninja–style slicer as one self-contained HTML file — itemized art
+  checklist (wood-grain dojo, juice stains, glowing blade), reference screenshot attached,
+  auto-demo required.</p>
+  <video src="media/ep07-wide-clean.mp4" autoplay muted loop playsinline controls></video>
   <div class="grid">
     <a class="card" target="_blank" rel="noopener" href="games/fruit-ninja-kimi-k3.html">
       <div class="model"><span class="dot" style="background:#38bdf8"></span>Kimi K3</div>
       <div class="meta"><span class="badge">$1.13</span><span class="time">42 min · 1275 lines</span></div>
       <div class="note">Max-effort reasoning (always on). Thought for 35 minutes before writing a single
       line — 73% of its 75k output tokens were reasoning — then delivered the longest, juiciest build.</div>
-      <div class="play">▶ Play</div>
+      <div class="play">▶ Try it</div>
     </a>
     <a class="card" target="_blank" rel="noopener" href="games/fruit-ninja-opus-4-8-think.html">
       <div class="model"><span class="dot" style="background:#f97316"></span>Claude Opus 4.8 · think</div>
       <div class="meta"><span class="badge">$0.55</span><span class="time">3.8 min · 1122 lines</span></div>
       <div class="note">Extended thinking cost just $0.07 and 43 seconds more than the default run —
       and visibly upgraded the fruit cross-sections and combo feedback.</div>
-      <div class="play">▶ Play</div>
+      <div class="play">▶ Try it</div>
     </a>
     <a class="card" target="_blank" rel="noopener" href="games/fruit-ninja-gpt-5.6-sol.html">
       <div class="model"><span class="dot" style="background:#a78bfa"></span>GPT-5.6 Sol</div>
       <div class="meta"><span class="badge">$0.39</span><span class="time">12 min · 946 lines</span></div>
       <div class="note">Default mode. Cheapest run of the three and the most detailed juice physics —
       sliced pineapples keep their crowns.</div>
-      <div class="play">▶ Play</div>
+      <div class="play">▶ Try it</div>
     </a>
   </div>
 
-  <h2>Monument Valley</h2>
-  <p class="task">Prompt: recreate a Monument Valley screenshot — isometric impossible architecture,
-  rotating crank mechanic, pastel palette. Reference image attached. Auto-demo required.</p>
+  <h2>Round 2 · Crossy Road</h2>
+  <p class="task">Build a Crossy Road–style endless hopper as one self-contained HTML file —
+  procedurally generated lanes, cars, logs, trains — with an AI auto-play mode. First round
+  we ever ran; all three shipped a working game on the first shot.</p>
+  <video src="media/ep01-wide-clean.mp4" muted loop playsinline controls preload="metadata"></video>
+  <div class="grid">
+    <a class="card" target="_blank" rel="noopener" href="games/crossy-road-kimi-k3.html">
+      <div class="model"><span class="dot" style="background:#38bdf8"></span>Kimi K3</div>
+      <div class="meta"><span class="badge">$0.74</span><span class="time">9 min · 517 lines</span></div>
+      <div class="note">Plainest visuals of the three, but everything works. Its first attempt burned an
+      entire 32k-token budget on pure reasoning and wrote zero code — we had to raise the cap to 100k.</div>
+      <div class="play">▶ Try it</div>
+    </a>
+    <a class="card" target="_blank" rel="noopener" href="games/crossy-road-opus-4-8.html">
+      <div class="model"><span class="dot" style="background:#f97316"></span>Claude Opus 4.8</div>
+      <div class="meta"><span class="badge">$0.24</span><span class="time">2.5 min · 597 lines</span></div>
+      <div class="note">Cheapest run of the round with clean pixel art — though its self-play AI kept
+      walking into traffic.</div>
+      <div class="play">▶ Try it</div>
+    </a>
+    <a class="card" target="_blank" rel="noopener" href="games/crossy-road-gpt-5.6-sol.html">
+      <div class="model"><span class="dot" style="background:#a78bfa"></span>GPT-5.6 Sol</div>
+      <div class="meta"><span class="badge">$0.32</span><span class="time">2 min · 873 lines</span></div>
+      <div class="note">Fastest and best-looking of the round — its auto-play chicken learned to dodge
+      its way past 40 rows.</div>
+      <div class="play">▶ Try it</div>
+    </a>
+  </div>
+
+  <h2>Round 3 · Monument Valley</h2>
+  <p class="task">Recreate a Monument Valley screenshot — isometric impossible architecture, rotating
+  crank mechanic, pastel palette. Reference image attached, auto-demo required.</p>
   <div class="grid">
     <a class="card" target="_blank" rel="noopener" href="games/monument-valley-opus-4-8-think.html">
       <div class="model"><span class="dot" style="background:#f97316"></span>Claude Opus 4.8 · think</div>
       <div class="meta"><span class="badge">$1.25</span><span class="time">12 min</span></div>
       <div class="note">Thinking mode tripled the cost of the default run — and returned onion domes,
       a closed courtyard loop and the crank, faithfully placed.</div>
-      <div class="play">▶ Play</div>
+      <div class="play">▶ Try it</div>
     </a>
     <a class="card" target="_blank" rel="noopener" href="games/monument-valley-gpt-5.6-sol.html">
       <div class="model"><span class="dot" style="background:#a78bfa"></span>GPT-5.6 Sol</div>
       <div class="meta"><span class="badge">$0.31</span><span class="time">10 min</span></div>
       <div class="note">"The Silent Path" — a complete Penrose loop with the princess waiting at the
       pressure plate.</div>
-      <div class="play">▶ Play</div>
+      <div class="play">▶ Try it</div>
     </a>
     <a class="card" target="_blank" rel="noopener" href="games/impossible-garden-kimi-k3.html">
       <div class="model"><span class="dot" style="background:#38bdf8"></span>Kimi K3</div>
@@ -103,7 +133,7 @@
       <div class="note">From the text-only round: a floating pastel garden with a glowing goal.
       K3's four attempts at the image-reproduction version each thought past the 50-minute
       infrastructure ceiling — it literally thinks longer than connections live.</div>
-      <div class="play">▶ Play</div>
+      <div class="play">▶ Try it</div>
     </a>
   </div>
 

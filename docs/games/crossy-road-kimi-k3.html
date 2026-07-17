@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Crossy Road - Auto Demo</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #111;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+    overflow: hidden;
+  }
+  canvas {
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+    box-shadow: 0 0 20px rgba(0,0,0,0.6);
+  }
+</style>
+</head>
+<body>
+<canvas id="game" width="720" height="960"></canvas>
+<script>
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+ctx.imageSmoothingEnabled = false;
+
+const W = 720, H = 960, TILE = 48, COLS = 15;
+const START_ROW = 3, HOP_FRAMES = 10;
+
+let rows = [];
+let player = null;
+let cameraY = 0;
+let maxRow = 0;
+let best = 0;
+let state = 'playing';
+let autoControl = true;
+let autoStartDelay = 0;
+let gameOverTime = 0;
+
+function getRow(i) {
+  while (rows.length <= i) rows.push(generateLane(rows.length));
+  return rows[i];
+}
+
+function getLaneAtY(y) {
+  const idx = Math.round(-y / TILE);
+  if (idx < 0) return { type: 'grass', trees: [] };
+  return getRow(idx);
+}
+
+function generateLane(i) {
+  const lane = { index: i, type: 'grass', y: -i * TILE, movers: [], trees: [], dir: 1, speed: 0, state: 'idle', timer: 0, warning: 0, train: null, trainWidth: 0 };
+  if (i === 0) { lane.type = 'grass'; return lane; }
+  if (i <= 5) { lane.type = 'grass'; }
+  else {
+    const prev = rows[i - 1];
+    if (prev.type !== 'grass') { lane.type = 'grass'; }
+    else {
+      const r = Math.random();
+      if (r < 0.45) lane.type = 'road';
+      else if (r < 0.8) lane.type = 'river';
+      else lane.type = 'rail';
+    }
+  }
+
+  if (lane.type === 'grass') {
+    if (Math.random() < 0.4) {
+      const density = 0.5;
+      let cols = [];
+      for (let c = 0; c < COLS; c++) if (Math.random() < density) cols.push(c);
+      if (cols.length === COLS) cols.splice(Math.floor(Math.random() * COLS), 1);
+      if (cols.length === 0) cols.push(Math.floor(Math.random() * COLS));
+      lane.trees = cols;
+    }
+  } else if (lane.type === 'road') {
+    lane.dir = Math.random() < 0.5 ? -1 : 1;
+    lane.speed = (Math.random() * 2.5 + 2.2) * lane.dir;
+    const colors = ['#ef5350', '#ffca28', '#42a5f5', '#66bb6a', '#ab47bc', '#26c6da'];
+    let x = -TILE * 4 - Math.random() * W;
+    while (x < W + TILE * 4) {
+      const wTiles = Math.random() < 0.65 ? 1 : 2;
+      const width = wTiles * TILE - 6;
+      lane.movers.push({ x, width, color: colors[Math.floor(Math.random() * colors.length)] });
+      x += width + (Math.random() * 3 + 2.5) * TILE;
+    }
+  } else if (lane.type === 'river') {
+    lane.dir = Math.random() < 0.5 ? -1 : 1;
+    lane.speed = (Math.random() * 1.6 + 0.7) * lane.dir;
+    let x = -TILE * 4 - Math.random() * W;
+    while (x < W + TILE * 4) {
+      const lenTiles = Math.floor(Math.random() * 3) + 1;
+      const width = lenTiles * TILE;
+      lane.movers.push({ x, width, widthTiles: lenTiles });
+      x += width + (Math.random() * 2.5 + 1.5) * TILE;
+    }
+  } else if (lane.type === 'rail') {
+    lane.dir = Math.random() < 0.5 ? -1 : 1;
+    lane.speed = 40 * lane.dir;
+    lane.state = 'idle';
+    lane.timer = Math.floor(Math.random() * 120 + 100);
+    lane.warning = 80;
+    lane.trainWidth = 5 * TILE;
+  }
+  return lane;
+}
+
+function movePlayer(dx, dy) {
+  if (player.hopping || state !== 'playing') return;
+  const targetY = player.y + dy * TILE;
+  const lane = getLaneAtY(targetY);
+  let tx = player.x + dx * TILE;
+  if (lane.type !== 'river') tx = Math.round(tx / TILE) * TILE;
+  const tcol = Math.round(tx / TILE);
+  if (tcol < 0 || tcol >= COLS) return;
+  if (lane.type === 'river' && (tx < 0 || tx + TILE > W)) return;
+  if (lane.type === 'grass' && lane.trees.includes(tcol)) return;
+
+  player.fromX = player.x;
+  player.fromY = player.y;
+  player.toX = tx;
+  player.toY = targetY;
+  player.hopping = true;
+  player.hopTimer = HOP_FRAMES;
+  player.facing = dx === 0 ? (dy < 0 ? 'up' : 'down') : (dx < 0 ? 'left' : 'right');
+}
+
+function isSafeMove(dx, dy) {
+  const targetY = player.y + dy * TILE;
+  const lane = getLaneAtY(targetY);
+  let tx = player.x + dx * TILE;
+  if (lane.type !== 'river') tx = Math.round(tx / TILE) * TILE;
+  const tcol = Math.round(tx / TILE);
+  if (tcol < 0 || tcol >= COLS) return false;
+  if (lane.type === 'river' && (tx < TILE / 2 || tx + TILE > W - TILE / 2)) return false;
+
+  if (lane.type === 'grass') return !lane.trees.includes(tcol);
+  if (lane.type === 'rail') return lane.state === 'idle';
+  if (lane.type === 'road') {
+    const left = tcol * TILE + 4, right = left + TILE - 8;
+    const lookahead = HOP_FRAMES + 20;
+    for (const v of lane.movers) {
+      const x1 = v.x + lane.speed * lookahead;
+      const x2 = x1 + v.width;
+      if (x2 > left && x1 < right) return false;
+    }
+    return true;
+  }
+  if (lane.type === 'river') {
+    const left = tx + 4, right = tx + TILE - 4;
+    const lookahead = HOP_FRAMES;
+    let onLog = false;
+    for (const log of lane.movers) {
+      const x1 = log.x + lane.speed * lookahead;
+      const x2 = x1 + log.width;
+      if (x2 > left && x1 < right) { onLog = true; break; }
+    }
+    if (!onLog) return false;
+    const future = tx + lane.speed * 60;
+    return future >= -TILE / 2 && future + TILE <= W + TILE / 2;
+  }
+  return true;
+}
+
+function updateAI() {
+  if (!autoControl || player.hopping || state !== 'playing') return;
+  const forward = isSafeMove(0, -1);
+  const left = isSafeMove(-1, 0);
+  const right = isSafeMove(1, 0);
+  const back = isSafeMove(0, 1);
+  if (forward) movePlayer(0, -1);
+  else if (left && right) movePlayer(Math.random() < 0.5 ? -1 : 1, 0);
+  else if (left) movePlayer(-1, 0);
+  else if (right) movePlayer(1, 0);
+  else if (back) movePlayer(0, 1);
+}
+
+function updateLanes() {
+  const topRow = Math.floor(-cameraY / TILE) + 2;
+  const bottomRow = Math.max(0, Math.ceil(-(cameraY + H) / TILE) - 2);
+  for (let i = bottomRow; i <= topRow; i++) {
+    const lane = getRow(i);
+    if (lane.type === 'road' || lane.type === 'river') {
+      for (const m of lane.movers) {
+        m.x += lane.speed;
+        if (lane.speed > 0 && m.x > W + 80) m.x = -m.width - Math.random() * TILE * 2;
+        else if (lane.speed < 0 && m.x + m.width < -80) m.x = W + Math.random() * TILE * 2;
+      }
+    } else if (lane.type === 'rail') {
+      if (lane.state === 'idle') {
+        lane.timer--;
+        if (lane.timer <= 0) { lane.state = 'warning'; lane.timer = lane.warning; }
+      } else if (lane.state === 'warning') {
+        lane.timer--;
+        if (lane.timer <= 0) {
+          lane.state = 'active';
+          lane.train = { x: lane.dir === 1 ? -lane.trainWidth - TILE : W + TILE };
+        }
+      } else if (lane.state === 'active') {
+        lane.train.x += lane.speed;
+        if (lane.dir === 1 && lane.train.x > W + TILE) { lane.state = 'idle'; lane.timer = Math.floor(Math.random() * 120 + 120); lane.train = null; }
+        else if (lane.dir === -1 && lane.train.x + lane.trainWidth < -TILE) { lane.state = 'idle'; lane.timer = Math.floor(Math.random() * 120 + 120); lane.train = null; }
+      }
+    }
+  }
+}
+
+function checkHazards() {
+  if (state !== 'playing' || player.hopping) return;
+  let px = player.x;
+  if (px < -TILE / 2 || px + TILE > W + TILE / 2) { die(); return; }
+  if (player.y - cameraY > H + TILE / 2) { die(); return; }
+
+  const lane = getLaneAtY(player.y);
+  if (lane.type === 'road') {
+    for (const v of lane.movers) {
+      if (v.x < px + TILE && v.x + v.width > px) { die(); return; }
+    }
+  } else if (lane.type === 'rail') {
+    if (lane.state === 'active' && lane.train) {
+      const t = lane.train;
+      if (t.x < px + TILE && t.x + lane.trainWidth > px) { die(); return; }
+    }
+  } else if (lane.type === 'river') {
+    let onLog = false;
+    for (const log of lane.movers) {
+      if (log.x < px + TILE && log.x + log.width > px) {
+        px += lane.speed;
+        onLog = true;
+        break;
+      }
+    }
+    if (!onLog) { die(); return; }
+    if (px < -TILE / 2 || px + TILE > W + TILE / 2) { die(); return; }
+    player.x = px;
+  }
+}
+
+function updatePlayer() {
+  if (player.hopping) {
+    player.hopTimer--;
+    if (player.hopTimer <= 0) {
+      player.x = player.toX;
+      player.y = player.toY;
+      player.hopping = false;
+      const row = -Math.round(player.y / TILE);
+      if (row > maxRow) maxRow = row;
+
+      const lane = getLaneAtY(player.y);
+      if (lane.type === 'river') {
+        let onLog = false;
+        for (const log of lane.movers) {
+          if (log.x < player.x + TILE && log.x + log.width > player.x) { onLog = true; break; }
+        }
+        if (!onLog) die();
+      } else if (lane.type === 'road') {
+        for (const v of lane.movers) {
+          if (v.x < player.x + TILE && v.x + v.width > player.x) { die(); break; }
+        }
+      } else if (lane.type === 'rail' && lane.state === 'active' && lane.train) {
+        const t = lane.train;
+        if (t.x < player.x + TILE && t.x + lane.trainWidth > player.x) die();
+      }
+    }
+  }
+}
+
+function updateCamera() {
+  const desired = player.y - 672;
+  if (desired < cameraY - 2) cameraY += (desired - cameraY) * 0.12;
+}
+
+function die() {
+  if (state === 'gameOver') return;
+  state = 'gameOver';
+  best = Math.max(best, maxRow - START_ROW);
+  gameOverTime = Date.now();
+  setTimeout(resetGame, 2000);
+}
+
+function resetGame() {
+  rows = [];
+  player = {
+    x: Math.floor(COLS / 2) * TILE,
+    y: -START_ROW * TILE,
+    fromX: 0, fromY: 0,
+    toX: 0, toY: 0,
+    hopping: false, hopTimer: 0,
+    facing: 'up', carried: null
+  };
+  cameraY = player.y - 672;
+  maxRow = START_ROW;
+  state = 'playing';
+  autoControl = true;
+  autoStartDelay = 0;
+  gameOverTime = 0;
+}
+
+function update() {
+  if (state === 'gameOver') return;
+  updateLanes();
+  updatePlayer();
+  checkHazards();
+  updateCamera();
+  const topRow = Math.floor(-cameraY / TILE) + 2;
+  getRow(topRow);
+  if (autoControl) {
+    if (autoStartDelay > 0) autoStartDelay--;
+    else updateAI();
+  }
+}
+
+// Drawing
+function drawTree(cx, sy) {
+  ctx.fillStyle = '#5d4037';
+  ctx.fillRect(cx + TILE / 2 - 6, sy + TILE / 2 - 6, 12, 20);
+  ctx.fillStyle = '#2e7d32';
+  ctx.fillRect(cx + 2, sy + 2, TILE - 4, TILE - 8);
+  ctx.fillStyle = '#388e3c';
+  ctx.fillRect(cx + 8, sy + 8, TILE - 16, TILE - 18);
+}
+
+function drawVehicle(v, sy) {
+  ctx.fillStyle = v.color;
+  ctx.fillRect(v.x + 2, sy + 6, v.width - 4, TILE - 12);
+  ctx.fillStyle = '#e3f2fd';
+  ctx.fillRect(v.x + 6, sy + 10, v.width - 12, 8);
+  ctx.fillStyle = '#212121';
+  ctx.fillRect(v.x + 8, sy + TILE - 14, 6, 6);
+  ctx.fillRect(v.x + v.width - 14, sy + TILE - 14, 6, 6);
+}
+
+function drawLog(log, sy) {
+  ctx.fillStyle = '#795548';
+  ctx.fillRect(log.x + 2, sy + 8, log.width - 4, TILE - 16);
+  ctx.fillStyle = '#5d4037';
+  for (let j = 0; j < log.widthTiles; j++) {
+    ctx.fillRect(log.x + j * TILE + 6, sy + 12, 4, TILE - 24);
+  }
+}
+
+function drawTrain(lane, sy) {
+  const t = lane.train;
+  ctx.fillStyle = '#c62828';
+  ctx.fillRect(t.x, sy + 2, lane.trainWidth, TILE - 4);
+  ctx.fillStyle = '#f44336';
+  if (lane.dir === 1) ctx.fillRect(t.x + lane.trainWidth - 48, sy + 2, 48, TILE - 4);
+  else ctx.fillRect(t.x, sy + 2, 48, TILE - 4);
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(t.x + (lane.dir === 1 ? lane.trainWidth - 36 : 12), sy + 10, 24, 10);
+  ctx.fillStyle = '#212121';
+  for (let x = t.x + 30; x < t.x + lane.trainWidth - 10; x += 40) {
+    ctx.fillRect(x, sy + TILE - 10, 12, 6);
+  }
+}
+
+function drawLane(lane) {
+  const sy = lane.y - cameraY;
+  if (sy < -TILE || sy > H) return;
+  if (lane.type === 'grass') {
+    ctx.fillStyle = '#4caf50';
+    ctx.fillRect(0, sy, W, TILE);
+    ctx.fillStyle = '#43a047';
+    for (let c = 0; c < COLS; c += 2) {
+      ctx.fillRect(c * TILE, sy, TILE, TILE / 2);
+      ctx.fillRect((c + 1) * TILE, sy + TILE / 2, TILE, TILE / 2);
+    }
+    for (const c of lane.trees) drawTree(c * TILE, sy);
+  } else if (lane.type === 'road') {
+    ctx.fillStyle = '#555';
+    ctx.fillRect(0, sy, W, TILE);
+    ctx.fillStyle = '#bdbdbd';
+    ctx.fillRect(0, sy + TILE / 2 - 2, W, 4);
+    for (const v of lane.movers) drawVehicle(v, sy);
+  } else if (lane.type === 'river') {
+    ctx.fillStyle = '#1e88e5';
+    ctx.fillRect(0, sy, W, TILE);
+    ctx.fillStyle = '#42a5f5';
+    ctx.fillRect(0, sy + TILE / 2 - 2, W, 4);
+    for (const log of lane.movers) drawLog(log, sy);
+  } else if (lane.type === 'rail') {
+    ctx.fillStyle = '#9e9e9e';
+    ctx.fillRect(0, sy, W, TILE);
+    ctx.fillStyle = '#424242';
+    ctx.fillRect(0, sy + 8, W, 4);
+    ctx.fillRect(0, sy + TILE - 12, W, 4);
+    ctx.fillStyle = '#5d4037';
+    for (let x = 0; x < W; x += 32) ctx.fillRect(x, sy, 8, TILE);
+    if (lane.state === 'warning') {
+      const flash = Math.floor(Date.now() / 150) % 2 === 0;
+      ctx.fillStyle = flash ? '#f44336' : '#ff9800';
+      ctx.beginPath();
+      ctx.arc(lane.dir === 1 ? W - 24 : 24, sy + TILE / 2, 8, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    if (lane.state === 'active' && lane.train) drawTrain(lane, sy);
+  }
+}
+
+function drawChicken(sx, sy) {
+  const size = 34;
+  const bx = sx + (TILE - size) / 2;
+  const by = sy + (TILE - size) / 2;
+  ctx.fillStyle = '#fdd835';
+  ctx.fillRect(bx + 4, by + 10, size - 8, size - 18);
+  ctx.fillStyle = '#fdd835';
+  ctx.fillRect(bx + 10, by, 14, 16);
+  ctx.fillStyle = '#ff9800';
+  ctx.fillRect(bx + 14, by - 4, 6, 6);
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(bx + 18, by + 4, 5, 5);
+  ctx.fillStyle = '#000';
+  ctx.fillRect(bx + 20, by + 6, 3, 3);
+  ctx.fillStyle = '#f44336';
+  ctx.fillRect(bx + 12, by - 8, 10, 6);
+  ctx.fillStyle = '#fbc02d';
+  ctx.fillRect(bx - 2, by + 14, 10, 12);
+  ctx.fillStyle = '#ff9800';
+  ctx.fillRect(bx + 8, by + size - 10, 6, 8);
+  ctx.fillRect(bx + size - 14, by + size - 10, 6, 8);
+}
+
+function drawPlayer() {
+  let px, py;
+  if (player.hopping) {
+    const p = 1 - player.hopTimer / HOP_FRAMES;
+    px = player.fromX + (player.toX - player.fromX) * p;
+    py = player.fromY + (player.toY - player.fromY) * p;
+    py -= Math.sin(p * Math.PI) * 12;
+  } else {
+    px = player.x;
+    py = player.y;
+  }
+  const sx = px;
+  const sy = py - cameraY;
+  ctx.fillStyle = 'rgba(0,0,0,0.3)';
+  ctx.beginPath();
+  ctx.ellipse(sx + TILE / 2, sy + TILE - 6, 16, 5, 0, 0, Math.PI * 2);
+  ctx.fill();
+  drawChicken(sx, sy);
+}
+
+function drawHUD() {
+  const score = maxRow - START_ROW;
+  ctx.fillStyle = 'rgba(0,0,0,0.45)';
+  ctx.fillRect(0, 0, W, 60);
+  ctx.font = 'bold 24px "Courier New", monospace';
+  ctx.fillStyle = '#fff';
+  ctx.textAlign = 'center';
+  ctx.fillText('SCORE ' + score + '   BEST ' + best, W / 2, 38);
+  if (autoControl) {
+    ctx.fillStyle = '#ff9800';
+    ctx.fillRect(10, 70, 70, 30);
+    ctx.fillStyle = '#000';
+    ctx.font = 'bold 16px "Courier New", monospace';
+    ctx.fillText('AUTO', 45, 91);
+  }
+}
+
+function drawGameOver() {
+  ctx.fillStyle = 'rgba(0,0,0,0.75)';
+  ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = '#222';
+  ctx.fillRect(W / 2 - 200, H / 2 - 130, 400, 260);
+  ctx.strokeStyle = '#ff9800';
+  ctx.lineWidth = 4;
+  ctx.strokeRect(W / 2 - 200, H / 2 - 130, 400, 260);
+  ctx.fillStyle = '#ff9800';
+  ctx.font = 'bold 40px "Courier New", monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('GAME OVER', W / 2, H / 2 - 70);
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 24px "Courier New", monospace';
+  const score = maxRow - START_ROW;
+  ctx.fillText('SCORE  ' + score, W / 2, H / 2 - 10);
+  ctx.fillText('BEST   ' + best, W / 2, H / 2 + 30);
+  ctx.fillStyle = '#aaa';
+  ctx.font = '18px "Courier New", monospace';
+  const remaining = Math.max(0, Math.ceil((2000 - (Date.now() - gameOverTime)) / 1000));
+  ctx.fillText('RESTARTING IN ' + remaining + '...', W / 2, H / 2 + 80);
+}
+
+function draw() {
+  ctx.fillStyle = '#1a1a2d';
+  ctx.fillRect(0, 0, W, H);
+  const topRow = Math.floor(-cameraY / TILE) + 2;
+  const bottomRow = Math.max(0, Math.ceil(-(cameraY + H) / TILE) - 2);
+  for (let i = bottomRow; i <= topRow; i++) drawLane(getRow(i));
+  drawPlayer();
+  drawHUD();
+  if (state === 'gameOver') drawGameOver();
+}
+
+function loop() {
+  update();
+  draw();
+  requestAnimationFrame(loop);
+}
+
+window.addEventListener('keydown', e => {
+  const map = { ArrowUp: [0, -1], ArrowDown: [0, 1], ArrowLeft: [-1, 0], ArrowRight: [1, 0] };
+  if (map[e.key]) {
+    e.preventDefault();
+    if (autoControl) { autoControl = false; autoStartDelay = 0; }
+    if (state === 'playing' && !player.hopping) movePlayer(...map[e.key]);
+  }
+});
+
+resetGame();
+autoStartDelay = 60;
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
