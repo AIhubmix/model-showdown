@@ -84,9 +84,13 @@ def build(style, seconds, seed):
     for i, v in enumerate(buf):
         t = i / SR
         fade = min(t / 0.5, 1.0, (seconds - t) / 2.0)
-        v = math.tanh(v * 1.2) * 0.85 * fade
+        v = math.tanh(v * 1.2) * fade
         out.append(v)
-    return out
+    # peak-normalize to -2 dBFS — un-normalized synth levels land around
+    # -16 dBFS peak, which reads as near-silence on phone speakers
+    peak = max(abs(v) for v in out) or 1.0
+    gain = 0.79 / peak
+    return [v * gain for v in out]
 
 
 def main():
