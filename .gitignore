@@ -1,0 +1,13 @@
+# local artifacts — raw model outputs, recordings, rendered videos,
+# and reference images (refs are often copyrighted; never republish)
+episodes/
+
+# generated media
+video/public/ep*/
+video/out/
+video/props*.json
+*.wav
+
+# deps / build
+node_modules/
+.DS_Store

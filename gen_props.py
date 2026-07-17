@@ -1,0 +1,63 @@
+#!/usr/bin/env python3
+"""Merge episode metrics + recording reports into Remotion input props.
+
+Usage: python3 gen_props.py <episode_dir> <title> <subtitle> > video/props.json
+Verdict strings default to auto heuristics; hand-edit the JSON before render if needed.
+"""
+import glob
+import json
+import os
+import sys
+
+ACCENTS = ["#38bdf8", "#f97316", "#a78bfa", "#22c55e"]
+
+ep_dir = sys.argv[1].rstrip("/")
+title = sys.argv[2] if len(sys.argv) > 2 else "Model Showdown"
+subtitle = sys.argv[3] if len(sys.argv) > 3 else ""
+ep = os.path.basename(ep_dir)
+
+ORDER = ["kimi-k3", "coding-kimi-k3", "claude-opus-4-8", "gpt-5.6-sol"]
+# short names for the narrow panel header; full names stay in title/subtitle
+SHORT = {"Claude Opus 4.8": "Opus 4.8", "GPT-5.6 Sol": "GPT-5.6 Sol"}
+
+results = []
+for path in sorted(glob.glob(f"{ep_dir}/metrics*.json")):
+    with open(path) as f:
+        for r in json.load(f)["results"]:
+            if r.get("code_extracted"):
+                results.append(r)
+results.sort(key=lambda r: ORDER.index(r["requested"]) if r["requested"] in ORDER else 99)
+
+models = []
+for i, r in enumerate(results):
+    model = r["requested"]
+    report_path = f"{ep_dir}/recordings/report_{model}.json"
+    verdict = "SHIPPED"
+    if os.path.exists(report_path):
+        with open(report_path) as f:
+            rep = json.load(f)
+        if rep.get("frozen"):
+            verdict = "FROZE"
+        elif rep.get("consoleErrors"):
+            verdict = "RAN W/ ERRORS"
+    models.append({
+        "name": SHORT.get(r["display"], r["display"]),
+        "cost": f"${r['cost_usd']:.2f}",
+        "timeS": r["latency_s"],
+        "video": f"{ep}/{model}.webm",
+        "verdict": verdict,
+        "accent": ACCENTS[i % len(ACCENTS)],
+    })
+
+audio = f"{ep}/audio.wav" if os.path.exists(f"video/public/{ep}/audio.wav") else None
+
+print(json.dumps({
+    "title": title,
+    "subtitle": subtitle,
+    "tagline": "AIHUBMIX — ONE API, 300+ MODELS",
+    "introFrames": 0,
+    "playFrames": 600,
+    "outroFrames": 130,
+    "audio": audio,
+    "models": models,
+}, indent=1))
