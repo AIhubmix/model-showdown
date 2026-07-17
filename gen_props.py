@@ -54,7 +54,7 @@ audio = f"{ep}/audio.wav" if os.path.exists(f"video/public/{ep}/audio.wav") else
 print(json.dumps({
     "title": title,
     "subtitle": subtitle,
-    "tagline": "AIHUBMIX — ONE API, 300+ MODELS",
+    "tagline": "AIHubMix: Unified API, 800+ models",
     "introFrames": 0,
     "playFrames": 600,
     "outroFrames": 130,

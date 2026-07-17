@@ -7,7 +7,7 @@ const FPS = 30;
 const defaultProps: ShowdownProps = {
   title: 'Build Crossy Road in one prompt',
   subtitle: 'Kimi K3 vs Claude Opus 4.8 vs GPT-5.6',
-  tagline: 'AIHUBMIX — ONE API, 300+ MODELS',
+  tagline: 'AIHubMix: Unified API, 800+ models',
   introFrames: 60,
   playFrames: 600,
   outroFrames: 130,

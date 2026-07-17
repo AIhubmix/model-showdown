@@ -162,10 +162,10 @@ const Panel: React.FC<{ m: ModelResult; w: number; h: number; scale: number; del
   );
 };
 
-const Panels: React.FC<ShowdownProps> = ({ models }) => {
+const Panels: React.FC<ShowdownProps> = ({ models, tagline }) => {
   const { width, height } = useVideoConfig();
   const s = width / 1080;
-  const brandH = 110 * s;
+  const brandH = tagline ? 110 * s : 0;
   const gap = 24 * s;
   const pad = 32 * s;
   const w = (width - pad * 2 - gap * (models.length - 1)) / models.length;
@@ -327,7 +327,7 @@ export const Showdown: React.FC<ShowdownProps> = (props) => {
       <Sequence from={introFrames + playFrames} durationInFrames={outroFrames}>
         <Scoreboard {...props} />
       </Sequence>
-      <BrandBar tagline={props.tagline} />
+      {props.tagline ? <BrandBar tagline={props.tagline} /> : null}
     </AbsoluteFill>
   );
 };
