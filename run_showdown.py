@@ -31,6 +31,7 @@ API_KEY = os.environ["AIHUBMIX_API_KEY"]
 # USD per 1M tokens (input, output)
 PRICING = {
     "kimi-k3": (3.0, 15.0),
+    "coding-kimi-k3": (3.0, 15.0),  # list price; the coding channel bills differently
     "claude-opus-4-8": (5.0, 25.0),
     "gpt-5.6-sol": (5.0, 30.0),
 }
@@ -42,6 +43,10 @@ MODELS = {
     "kimi-k3": {"display": "Kimi K3", "max_tokens": 100000, "retries": 12},
     "claude-opus-4-8": {"display": "Claude Opus 4.8"},
     "gpt-5.6-sol": {"display": "GPT-5.6 Sol"},
+    # bench substitute channel — configured but NOT in the default lineup
+    # (lineup: False). Use explicitly via --models when the primary is down.
+    "coding-kimi-k3": {"display": "Kimi K3", "max_tokens": 100000,
+                       "retries": 8, "lineup": False},
 }
 DEFAULT_MAX_TOKENS = 60000
 
@@ -235,7 +240,8 @@ def main():
                     help="prompt file to copy into the episode as task.md")
     ap.add_argument("--ref", metavar="IMAGE", action="append", default=[],
                     help="reference image(s) to send along with the prompt")
-    ap.add_argument("--models", default=",".join(MODELS))
+    ap.add_argument("--models",
+                    default=",".join(m for m, c in MODELS.items() if c.get("lineup", True)))
     ap.add_argument("--record", type=int, default=0, metavar="SECONDS",
                     help="record each artifact for N seconds as soon as it lands")
     args = ap.parse_args()

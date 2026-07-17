@@ -97,6 +97,22 @@ PRICING = {"kimi-k3": (3.0, 15.0), "claude-opus-4-8": (5.0, 25.0), "gpt-5.6-sol"
 Brand logo and tagline are composition props (`video/src/Root.tsx` defaults) —
 swap in your own.
 
+## Claude Code skill (optional autopilot)
+
+The repo ships a [Claude Code](https://claude.com/claude-code) skill at
+`.claude/skills/showdown/` that drives the whole pipeline conversationally —
+parse a one-line request ("pit kimi-k3 against gpt-5.6 on a pinball sim"),
+confirm the prompt, run generation + recording, QA the posters, render, and
+draft posts.
+
+- **Project-scoped (zero install):** open Claude Code anywhere inside this
+  repo and type `/showdown <task idea>` — project skills are auto-discovered.
+- **Global (use from any directory):**
+
+  ```bash
+  cp -r .claude/skills/showdown ~/.claude/skills/
+  ```
+
 ## Full episode workflow
 
 The quickstart above covers the automated 80%. A full episode has a few human
