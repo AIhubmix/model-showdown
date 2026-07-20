@@ -137,6 +137,32 @@
     </a>
   </div>
 
+  <h2>Round 4 · Gargantua</h2>
+  <p class="task">Render <em>Interstellar</em>'s black hole in a single self-contained HTML file — a
+  fullscreen ray-marched shader bending light around a Schwarzschild metric, procedural accretion
+  disk, twin lensed rings, animated cinematic camera. Reference still attached, exposure discipline
+  enforced in the brief after an earlier attempt burned the whole frame white.</p>
+  <video src="media/ep10-wide-clean.mp4" muted loop playsinline controls preload="metadata"></video>
+  <div class="grid">
+    <a class="card" target="_blank" rel="noopener" href="games/gargantua-claude-fable-5.html">
+      <div class="model"><span class="dot" style="background:#f97316"></span>Claude Fable 5</div>
+      <div class="meta"><span class="badge">$1.39</span><span class="time">6 min · 357 lines</span></div>
+      <div class="note">Compiled and ran first try. ACES filmic tone mapping at 0.9 exposure rolls off
+      the highlights so the disk's inner edge burns white while the event-horizon shadow stays pure
+      black — plus 280 ray-march steps and a full animated camera move.</div>
+      <div class="play">▶ Try it</div>
+    </a>
+    <a class="card" target="_blank" rel="noopener" href="games/gargantua-qwen3.8-max-preview.html">
+      <div class="model"><span class="dot" style="background:#38bdf8"></span>Qwen3.8 Max</div>
+      <div class="meta"><span class="badge">$0.16</span><span class="time">16 min · 460 lines</span></div>
+      <div class="note">9× cheaper and out-details Fable's disk with denser 5-octave noise — but its
+      first attempt shipped a GLSL type mismatch (fbm called with a vec3 where it took a vec2) that
+      failed to compile into a black screen. Fixed, it skipped tone mapping entirely, so bloom floods
+      the core and washes out the shadow it needed to keep dark.</div>
+      <div class="play">▶ Try it</div>
+    </a>
+  </div>
+
   <footer>
     Built with <a href="https://github.com/AIhubmix/model-showdown">model-showdown</a> —
     an open-source pipeline that fans one prompt out to N models, records the artifacts
