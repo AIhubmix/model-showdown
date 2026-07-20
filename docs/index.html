@@ -163,6 +163,29 @@
     </a>
   </div>
 
+  <h2>Round 5 · HexGL Racer</h2>
+  <p class="task">Build a HexGL-style anti-gravity racer as one self-contained HTML file — sculpted
+  metal track over a hazy dusk sky, cyan glow trim, orange boost strips, UnrealBloomPass, HUD lap
+  timer and speed gauge. Screenshot-as-wallpaper visual bar, auto-demo required.</p>
+  <video src="media/ep08-vertical-clean.mp4" muted loop playsinline controls preload="metadata"></video>
+  <div class="grid">
+    <a class="card" target="_blank" rel="noopener" href="games/hexgl-claude-fable-5.html">
+      <div class="model"><span class="dot" style="background:#f97316"></span>Claude Fable 5</div>
+      <div class="meta"><span class="badge">$2.36</span><span class="time">10 min · 807 lines</span></div>
+      <div class="note">Shipped byte-for-byte identical to its raw output — ran clean first try. Loop-de-loop
+      track geometry, exposure-disciplined bloom, full HUD (lap timer, speed gauge, hex vignette).</div>
+      <div class="play">▶ Try it</div>
+    </a>
+    <a class="card" target="_blank" rel="noopener" href="games/hexgl-qwen3.8-max-preview.html">
+      <div class="model"><span class="dot" style="background:#38bdf8"></span>Qwen3.8 Max</div>
+      <div class="meta"><span class="badge">$0.15</span><span class="time">14 min · 650 lines</span></div>
+      <div class="note">16× cheaper — but its raw output called a Three.js method that doesn't exist
+      (<code>Vector3.addScaledVectors</code>, plural) in the track-spline generator. One-line manual
+      patch to two chained <code>addScaledVector()</code> calls and it ran.</div>
+      <div class="play">▶ Try it</div>
+    </a>
+  </div>
+
   <footer>
     Built with <a href="https://github.com/AIhubmix/model-showdown">model-showdown</a> —
     an open-source pipeline that fans one prompt out to N models, records the artifacts
