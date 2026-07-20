@@ -16,6 +16,8 @@ const flag = (name, dflt) => {
 };
 const seconds = Number(flag('--seconds', 26));
 const only = flag('--model', null);
+const vpW = Number(flag('--width', 720));
+const vpH = Number(flag('--height', 960));
 
 const FAIL_HTML = (name) => `<!DOCTYPE html><html><body style="margin:0;background:#111;
 display:flex;align-items:center;justify-content:center;height:100vh;font-family:monospace">
@@ -39,8 +41,8 @@ async function recordOne(model) {
   const tmpDir = join(recDir, `tmp_${model}`);
   const browser = await chromium.launch();
   const ctx = await browser.newContext({
-    viewport: { width: 720, height: 960 },
-    recordVideo: { dir: tmpDir, size: { width: 720, height: 960 } },
+    viewport: { width: vpW, height: vpH },
+    recordVideo: { dir: tmpDir, size: { width: vpW, height: vpH } },
   });
   const page = await ctx.newPage();
   const errors = [];

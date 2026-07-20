@@ -11,12 +11,16 @@ import sys
 
 ACCENTS = ["#38bdf8", "#f97316", "#a78bfa", "#22c55e"]
 
-ep_dir = sys.argv[1].rstrip("/")
-title = sys.argv[2] if len(sys.argv) > 2 else "Model Showdown"
-subtitle = sys.argv[3] if len(sys.argv) > 3 else ""
+argv = [a for a in sys.argv[1:] if a != "--vertical"]
+layout = "vertical" if "--vertical" in sys.argv else "horizontal"
+ep_dir = argv[0].rstrip("/")
+title = argv[1] if len(argv) > 1 else "Model Showdown"
+subtitle = argv[2] if len(argv) > 2 else ""
 ep = os.path.basename(ep_dir)
 
-ORDER = ["kimi-k3", "coding-kimi-k3", "claude-opus-4-8-think", "claude-opus-4-8", "gpt-5.6-sol"]
+# 上下排版：ORDER 决定堆叠顺序（靠前=靠上）
+ORDER = ["qwen3.8-max-preview", "claude-fable-5",
+         "kimi-k3", "coding-kimi-k3", "claude-opus-4-8-think", "claude-opus-4-8", "gpt-5.6-sol"]
 # short names for the narrow panel header; full names stay in title/subtitle
 SHORT = {"Claude Opus 4.8": "Opus 4.8", "GPT-5.6 Sol": "GPT-5.6 Sol"}
 
@@ -59,5 +63,6 @@ print(json.dumps({
     "playFrames": 600,
     "outroFrames": 130,
     "audio": audio,
+    "layout": layout,
     "models": models,
 }, indent=1))

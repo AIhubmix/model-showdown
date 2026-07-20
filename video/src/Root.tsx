@@ -63,5 +63,15 @@ export const Root: React.FC = () => (
       defaultProps={defaultProps}
       calculateMetadata={({ props }) => ({ durationInFrames: total(props) })}
     />
+    <Composition
+      id="ShowdownVertical"
+      component={Showdown}
+      width={1080}
+      height={1920}
+      fps={FPS}
+      durationInFrames={total(defaultProps)}
+      defaultProps={{ ...defaultProps, layout: 'vertical' }}
+      calculateMetadata={({ props }) => ({ durationInFrames: total(props) })}
+    />
   </>
 );

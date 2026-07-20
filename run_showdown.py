@@ -36,6 +36,8 @@ PRICING = {
     "claude-opus-4-8-think": (5.0, 25.0),
     "claude-fable-5": (10.0, 50.0),
     "gpt-5.6-sol": (5.0, 30.0),
+    # qwen3.8-max-preview 官方未公布 per-token 牌价（订阅制预览），暂用前代 qwen3.7-max 牌价估算
+    "qwen3.8-max-preview": (1.25, 3.75),
 }
 
 # display name, max_tokens override (K3 always thinks at max effort — reasoning
@@ -63,6 +65,8 @@ MODELS = {
                        "params": {"thinking": {"type": "enabled", "budget_tokens": 60000}}},
     "coding-kimi-k3": {"display": "Kimi K3", "max_tokens": 100000,
                        "retries": 8, "lineup": False},
+    # Qwen3.8 Max Preview：大 HTML 产物给足输出预算；显式 --models 选入
+    "qwen3.8-max-preview": {"display": "Qwen3.8 Max", "max_tokens": 65000, "lineup": False},
 }
 DEFAULT_MAX_TOKENS = 60000
 
@@ -72,19 +76,36 @@ RETRY_WAIT_S = 60
 HEARTBEAT_S = 30
 
 
+def sniff_image_mime(data, ext):
+    """真实字节优先判 mime，而非文件扩展名。Anthropic(claude) 会严格校验
+    声明的 media type 与实际字节一致，png/jpeg 不符直接 400——曾因 .png 里
+    装 jpeg 字节导致整轮生成白跑重启。扩展名仅作兜底。"""
+    if data[:3] == b"\xff\xd8\xff":
+        return "jpeg"
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        return "png"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "webp"
+    if data[:6] in (b"GIF87a", b"GIF89a"):
+        return "gif"
+    return {"jpg": "jpeg", "jpeg": "jpeg", "png": "png", "webp": "webp",
+            "gif": "gif"}.get(ext, "png")
+
+
 def build_user_content(prompt, ep_dir):
     """Text-only content, or multimodal [text + image_url] when the episode
     ships a reference image (ref.png / ref.jpg)."""
     refs = sorted(r for r in globmod.glob(f"{ep_dir}/ref*")
-                  if r.rsplit(".", 1)[-1].lower() in ("png", "jpg", "jpeg", "webp"))
+                  if r.rsplit(".", 1)[-1].lower() in ("png", "jpg", "jpeg", "webp", "gif"))
     if not refs:
         return prompt
     parts = [{"type": "text", "text": prompt}]
     for ref in refs:
         ext = ref.rsplit(".", 1)[-1].lower()
-        mime = {"jpg": "jpeg", "jpeg": "jpeg", "png": "png", "webp": "webp"}.get(ext, "png")
         with open(ref, "rb") as f:
-            b64 = base64.b64encode(f.read()).decode()
+            raw = f.read()
+        mime = sniff_image_mime(raw, ext)
+        b64 = base64.b64encode(raw).decode()
         parts.append({"type": "image_url",
                       "image_url": {"url": f"data:image/{mime};base64,{b64}"}})
     return parts
@@ -254,10 +275,16 @@ def extract_html(content):
     return None
 
 
-def record_artifact(ep_dir, model, seconds):
-    """Record one model's artifact (called as soon as its generation finishes)."""
+def record_artifact(ep_dir, model, seconds, rec_w=None, rec_h=None):
+    """Record one model's artifact (called as soon as its generation finishes).
+    rec_w/rec_h 控制录屏视口：横屏内容(如赛车)必须传 1280x720，否则默认
+    720x960 竖屏会把横屏画面压扁——曾因此把 3 遍录屏返工。"""
     cmd = ["node", os.path.join(SCRIPT_DIR, "record.mjs"), ep_dir,
            "--seconds", str(seconds), "--model", model]
+    if rec_w:
+        cmd += ["--width", str(rec_w)]
+    if rec_h:
+        cmd += ["--height", str(rec_h)]
     t0 = time.time()
     proc = subprocess.run(cmd, capture_output=True, text=True, timeout=seconds + 120)
     ok = proc.returncode == 0
@@ -268,7 +295,7 @@ def record_artifact(ep_dir, model, seconds):
     return ok
 
 
-def run_one(requested, prompt, ep_dir, record_seconds):
+def run_one(requested, prompt, ep_dir, record_seconds, rec_w=None, rec_h=None):
     meta = MODELS.get(requested, {"display": requested})
     retries = meta.get("retries", RETRIES)
     last_err = None
@@ -320,7 +347,8 @@ def run_one(requested, prompt, ep_dir, record_seconds):
             "error": None,
         }
         if html and record_seconds:
-            result["recorded"] = record_artifact(ep_dir, requested, record_seconds)
+            result["recorded"] = record_artifact(ep_dir, requested, record_seconds,
+                                                  rec_w, rec_h)
         return result
     return {"requested": requested, "display": meta["display"], "error": last_err,
             "code_extracted": False}
@@ -346,7 +374,13 @@ def main():
                     default=",".join(m for m, c in MODELS.items() if c.get("lineup", True)))
     ap.add_argument("--record", type=int, default=0, metavar="SECONDS",
                     help="record each artifact for N seconds as soon as it lands")
+    ap.add_argument("--rec-size", metavar="WxH", default="720x960",
+                    help="录屏视口。横屏内容(赛车/宽场景)用 1280x720，默认 720x960 竖屏")
     args = ap.parse_args()
+    try:
+        rec_w, rec_h = (int(x) for x in args.rec_size.lower().split("x"))
+    except ValueError:
+        sys.exit(f"--rec-size 需形如 1280x720，收到: {args.rec_size}")
 
     if args.episode_dir:
         ep_dir = args.episode_dir.rstrip("/")
@@ -387,7 +421,8 @@ def main():
         os.replace(tmp, metrics_path)
 
     with cf.ThreadPoolExecutor(max_workers=len(models)) as ex:
-        futs = {ex.submit(run_one, m, prompt, ep_dir, args.record): m for m in models}
+        futs = {ex.submit(run_one, m, prompt, ep_dir, args.record, rec_w, rec_h): m
+                for m in models}
         for fut in cf.as_completed(futs):
             with lock:
                 results.append(fut.result())

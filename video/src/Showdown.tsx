@@ -18,6 +18,7 @@ export type ModelResult = {
   video: string; // public/ relative, e.g. "ep01/kimi-k3.webm"
   verdict: string; // short English verdict chip
   accent: string;
+  startFrom?: number; // 视频起播帧偏移：让首帧落在画面最丰富/对比最强的一刻
 };
 
 export type ShowdownProps = {
@@ -29,6 +30,7 @@ export type ShowdownProps = {
   playFrames: number;
   outroFrames: number;
   audio?: string; // public/ relative path to an audio bed, e.g. "ep02/audio.wav"
+  layout?: 'horizontal' | 'vertical'; // 面板并排(默认) 或 上下堆叠
 };
 
 const BG = '#0b0e14';
@@ -95,16 +97,18 @@ const CostBadge: React.FC<{ cost: string; scale: number }> = ({ cost, scale }) =
   </div>
 );
 
-const Panel: React.FC<{ m: ModelResult; w: number; h: number; scale: number; delay: number }> = ({
-  m,
-  w,
-  h,
-  scale,
-  delay,
-}) => {
+const Panel: React.FC<{
+  m: ModelResult;
+  w: number;
+  h: number;
+  scale: number;
+  delay: number;
+  noEnter?: boolean;
+}> = ({ m, w, h, scale, delay, noEnter }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
-  const enter = spring({ frame: frame - delay, fps, config: { damping: 200 } });
+  // noEnter：跳过淡入/位移，首帧即满显内容（避免第 0 帧是深色空背景）
+  const enter = noEnter ? 1 : spring({ frame: frame - delay, fps, config: { damping: 200 } });
   const headerH = 72 * scale;
   return (
     <div
@@ -155,6 +159,7 @@ const Panel: React.FC<{ m: ModelResult; w: number; h: number; scale: number; del
         <OffthreadVideo
           src={staticFile(m.video)}
           muted
+          startFrom={m.startFrom ?? 0}
           style={{ width: '100%', height: '100%', objectFit: 'cover' }}
         />
       </div>
@@ -162,13 +167,43 @@ const Panel: React.FC<{ m: ModelResult; w: number; h: number; scale: number; del
   );
 };
 
-const Panels: React.FC<ShowdownProps> = ({ models, tagline }) => {
+const Panels: React.FC<ShowdownProps> = ({ models, tagline, layout = 'horizontal' }) => {
   const { width, height } = useVideoConfig();
   const s = width / 1080;
   const brandH = tagline ? 110 * s : 0;
   const gap = 24 * s;
   const pad = 32 * s;
-  const w = (width - pad * 2 - gap * (models.length - 1)) / models.length;
+  const n = models.length;
+
+  if (layout === 'vertical') {
+    // 上下堆叠：每块占满宽度；视频区按 16:9 精确排布，横屏游戏画面完整不裁，整体竖向居中
+    const w = width - pad * 2;
+    const headerH = 72 * s;
+    const avail = height - brandH - pad * 2 - gap * (n - 1);
+    const idealH = (w * 9) / 16 + headerH;
+    const h = Math.min(idealH, avail / n); // 放不下时回退到等分
+    const stackH = h * n + gap * (n - 1);
+    return (
+      <AbsoluteFill style={{ background: BG }}>
+        <div
+          style={{
+            position: 'absolute',
+            top: (height - brandH - stackH) / 2,
+            left: pad,
+            display: 'flex',
+            flexDirection: 'column',
+            gap,
+          }}
+        >
+          {models.map((m, i) => (
+            <Panel key={m.name} m={m} w={w} h={h} scale={s} delay={i * 5} noEnter />
+          ))}
+        </div>
+      </AbsoluteFill>
+    );
+  }
+
+  const w = (width - pad * 2 - gap * (n - 1)) / n;
   const h = Math.min(height - brandH - pad * 2, (w * 4) / 3 + 72 * s);
   return (
     <AbsoluteFill style={{ background: BG }}>
