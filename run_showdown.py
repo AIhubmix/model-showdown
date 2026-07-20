@@ -275,6 +275,49 @@ def extract_html(content):
     return None
 
 
+FFMPEG = ["npx", "--no-install", "--prefix", os.path.join(SCRIPT_DIR, "video"),
+          "remotion", "ffmpeg"]  # Remotion 自带 ffmpeg，免装系统 ffmpeg
+
+
+def _luma(webm, t):
+    """webm 在 t 秒处的平均亮度(0-255)，取不到返回 -1。"""
+    try:
+        from PIL import Image, ImageStat
+    except ImportError:
+        return -1
+    p = os.path.join(SCRIPT_DIR, "_luma_probe.png")
+    subprocess.run(FFMPEG + ["-y", "-loglevel", "error", "-ss", str(t), "-i", webm,
+                             "-frames:v", "1", p], capture_output=True)
+    if not os.path.exists(p):
+        return -1
+    v = ImageStat.Stat(Image.open(p).convert("L")).mean[0]
+    os.remove(p)
+    return v
+
+
+def trim_leading_black(webm, floor=45, step=0.5, upto=18):
+    """掐掉录屏开头的黑帧(模型常把开始界面做成黑底标题屏)，让文件从第一帧内容起播 →
+    合成时 startFrom 恒为 0、从头播即可，无需人工抽帧挑起点。检测不到 PIL 时静默跳过。
+    Why 掐头而非跳过：auto-demo 靠"无输入"触发，录屏不能注入按键去发车(会卡标题屏)，
+    所以标题屏那几秒黑必然被录进来，只能事后掐掉。"""
+    if _luma(webm, 0) < 0:  # 无 PIL/ffmpeg，跳过
+        return
+    t = 0.0
+    while t < upto and _luma(webm, t) < floor:
+        t += step
+    if t <= 0.01 or t >= upto:  # 首帧已有内容 / 全程都黑：不动
+        return
+    tmp = webm + ".trim.webm"
+    r = subprocess.run(FFMPEG + ["-y", "-loglevel", "error", "-i", webm, "-ss", str(round(t, 2)),
+                                 "-c:v", "libvpx", "-deadline", "realtime", "-cpu-used", "6",
+                                 "-b:v", "6M", "-an", tmp], capture_output=True)
+    if r.returncode == 0 and os.path.exists(tmp) and os.path.getsize(tmp) > 0:
+        os.replace(tmp, webm)
+        print(f"[trim] 掐头 {t:.1f}s 黑标题屏 → {os.path.basename(webm)} 从内容帧起播", flush=True)
+    elif os.path.exists(tmp):
+        os.remove(tmp)
+
+
 def record_artifact(ep_dir, model, seconds, rec_w=None, rec_h=None):
     """Record one model's artifact (called as soon as its generation finishes).
     rec_w/rec_h 控制录屏视口：横屏内容(如赛车)必须传 1280x720，否则默认
@@ -292,6 +335,9 @@ def record_artifact(ep_dir, model, seconds, rec_w=None, rec_h=None):
           f"in {time.time() - t0:.0f}s", flush=True)
     if not ok:
         print(f"[{model}] record stderr: {proc.stderr[-500:]}", flush=True)
+        return ok
+    # 首帧非黑：自动掐掉开头黑标题屏，保证 startFrom=0 从头播就有画面
+    trim_leading_black(os.path.join(ep_dir, "recordings", f"{model}.webm"))
     return ok
 
 

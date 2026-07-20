@@ -51,6 +51,9 @@ async function recordOne(model) {
 
   console.log(`[${model}] recording ${seconds}s from ${page_url}`);
   await page.goto(page_url);
+  // 注意：不要在这里注入按键/点击去"发车"。auto-demo 类作品是靠「N 秒无输入」自动开演的，
+  // 一旦注入输入反而会把它切到手动模式、卡在标题屏。首帧非黑必须靠出题(场景从第 0 帧就渲染、
+  // 标题只作叠加层)在源头解决，见 SKILL.md 出题规则。
   // screenshots at 5s and 15s to detect a frozen screen + provide a poster image
   await page.waitForTimeout(5000);
   const shot1 = await page.screenshot();

@@ -90,3 +90,20 @@ fold new pitfalls back into this file.
   retries are built in, and off-peak scheduled runs are the reliable fallback
 - The runner requires only Python stdlib; keep it free of `X | None` unions
   (must run on Python 3.9)
+- Superlative adjectives get over-executed (ep10): "overexposed / burn / maximum
+  contrast" made BOTH contestants render a pure-white frame. Visual prompts must
+  state an upper bound too — an exposure-discipline clause (what may clip, what
+  must stay visible / dominant)
+- All-white or all-black recordings: rule out the environment before blaming the
+  model — screenshot the same HTML with default headless (SwiftShader) vs
+  `--use-angle=metal`; only if both match is it the artifact's own look
+- CDN-heavy artifacts (Three.js importmap) burn ~5-6s of page load plus any
+  artistic fade-in at the head of the recording (ep10: first usable frame at
+  ~9-10s). Record with headroom and set the panel's `startFrom` to skip it —
+  verify with extracted frames, not just the 15s poster
+- Cinematic/wide subject matter: ShowdownWide + `layout: "vertical"` (props) +
+  `--rec-size 1280x720` gives stacked 32:9 letterbox panels — the center-crop
+  reads as anamorphic widescreen, great for space/film-look tasks
+- One-shot shader tasks discriminate hard: a single GLSL overload typo
+  (`fbm(vec3)` vs `fbm(vec2)`, ep10 Qwen) voids the whole render — unlike JS,
+  one compile error = black screen. Good task genre for separating models
