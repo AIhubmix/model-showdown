@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>The Model Arena — one prompt, one shot, real costs</title>
-<meta name="description" content="Same prompt, one shot each. Every game here was generated as a single HTML file — untouched — and plays itself. Costs and timings are real.">
+<meta name="description" content="Same prompt, one shot each. Every game here was generated as a single HTML file — untouched — and plays itself. Vote for the best, then see who made it. Costs and timings are real.">
 <script data-goatcounter="https://ddu.goatcounter.com/count"
         async src="//gc.zgo.at/count.js"></script>
 <style>
@@ -18,7 +18,7 @@
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     padding: 48px 24px 80px;
   }
-  .wrap { max-width: 1080px; margin: 0 auto; }
+  .wrap { max-width: 1200px; margin: 0 auto; }
   .kicker { color: var(--muted); font-family: "SF Mono", Menlo, monospace; letter-spacing: 3px; font-size: 13px; }
   h1 { font-size: 40px; font-weight: 800; margin: 12px 0 8px; }
   .sub { color: var(--muted); font-size: 17px; max-width: 680px; line-height: 1.55; }
@@ -39,7 +39,6 @@
   .time { color: var(--muted); padding: 2px 0; }
   .note { margin-top: 10px; color: var(--muted); font-size: 13.5px; line-height: 1.45; }
   .play { margin-top: 12px; font-size: 13px; font-weight: 700; color: #7dd3fc; }
-  video { width: 100%; border-radius: 16px; border: 1px solid var(--line); margin-top: 8px; display: block; }
   footer { margin-top: 72px; color: var(--muted); font-size: 14px; border-top: 1px solid var(--line); padding-top: 20px; line-height: 1.6; }
   footer a { color: #7dd3fc; }
 
@@ -63,20 +62,17 @@
   .rail a:hover .label { opacity: 1; }
   @media (max-width: 1300px) { .rail { display: none; } }
 
-  .tally {
-    display: inline-flex; align-items: center; gap: 10px; margin: 0 0 4px;
-    background: var(--card); border: 1px solid var(--line); border-radius: 999px;
-    padding: 8px 18px; font-family: "SF Mono", Menlo, monospace; font-size: 14px; color: var(--muted);
-  }
-  .tally b { color: var(--text); }
+  .round-grid { grid-template-columns: repeat(var(--cols), 1fr); align-items: stretch; }
+  @media (max-width: 980px) { .round-grid { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 560px) { .round-grid { grid-template-columns: 1fr; } }
 
   .mystery-card {
     background: var(--card); border: 1px solid var(--line); border-radius: 16px;
-    overflow: hidden; transition: border-color .12s ease;
+    overflow: hidden; transition: border-color .12s ease; display: flex; flex-direction: column;
   }
   .mystery-card.revealed { border-color: rgba(255,255,255,0.22); }
 
-  .poster-wrap { position: relative; aspect-ratio: 3/4; overflow: hidden; background: #000; }
+  .poster-wrap { position: relative; aspect-ratio: 3/4; overflow: hidden; background: #000; flex: none; }
   .poster-wrap img { width: 100%; height: 100%; object-fit: cover; display: block; transition: filter .25s ease; }
   .mystery-card:not(.revealed) .poster-wrap img { filter: brightness(0.85); }
   .contestant-tag {
@@ -93,25 +89,30 @@
   .preview-btn:hover { background: rgba(255,255,255,0.12); border-color: rgba(255,255,255,0.4); }
   .poster-wrap iframe { width: 100%; height: 100%; border: 0; display: block; background: #000; }
 
-  .card-body { padding: 16px; }
+  .card-body { padding: 16px; display: flex; flex-direction: column; flex: 1; }
 
-  .guess-row { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 4px; }
-  .guess-btn {
-    background: rgba(255,255,255,0.04); border: 1px solid var(--line); color: var(--text);
-    border-radius: 8px; padding: 8px 6px; font-size: 12.5px; cursor: pointer;
-    transition: background .12s ease, border-color .12s ease;
+  .card-actions { display: flex; align-items: center; gap: 8px; margin-top: auto; }
+
+  .open-full {
+    background: rgba(255,255,255,0.04); border: 1px solid var(--line); border-radius: 999px;
+    padding: 10px 14px; font-size: 12.5px; font-weight: 700; color: var(--text); text-decoration: none;
+    white-space: nowrap; text-align: center; transition: background .12s ease, border-color .12s ease;
   }
-  .guess-btn:hover { background: rgba(255,255,255,0.09); border-color: rgba(255,255,255,0.22); }
+  .open-full:hover { background: rgba(255,255,255,0.09); border-color: rgba(255,255,255,0.22); }
 
-  .verdict { margin-top: 12px; font-size: 13px; font-weight: 700; padding: 6px 10px; border-radius: 8px; display: inline-block; }
-  .verdict.correct { color: var(--money); background: rgba(34,197,94,0.12); border: 1px solid rgba(34,197,94,0.4); }
-  .verdict.wrong { color: #fb923c; background: rgba(251,146,60,0.12); border: 1px solid rgba(251,146,60,0.4); }
-  .open-full { display: block; margin-top: 12px; font-size: 13px; font-weight: 700; color: #7dd3fc; text-decoration: none; }
-  .open-full:hover { text-decoration: underline; }
+  .vote-btn {
+    background: rgba(125,211,252,0.08); border: 1.5px solid #7dd3fc; color: #7dd3fc;
+    border-radius: 999px; padding: 10px 12px; font-size: 13px; font-weight: 800; cursor: pointer;
+    flex: 1; transition: background .12s ease;
+  }
+  .vote-btn:hover { background: rgba(125,211,252,0.18); }
+  .vote-btn:disabled { opacity: 0.4; cursor: default; }
 
-  #blind-grid { grid-template-columns: repeat(4, 1fr); }
-  @media (max-width: 900px) { #blind-grid { grid-template-columns: repeat(2, 1fr); } }
-  @media (max-width: 520px) { #blind-grid { grid-template-columns: 1fr; } }
+  .verdict {
+    position: absolute; top: 10px; right: 10px; font-size: 12px; font-weight: 700;
+    padding: 3px 10px; border-radius: 8px;
+  }
+  .verdict.correct { color: var(--money); background: rgba(8,10,16,0.85); border: 1px solid rgba(34,197,94,0.5); }
 </style>
 </head>
 <body>
@@ -120,157 +121,11 @@
   <div class="kicker">SAME PROMPT · ONE SHOT · REAL COSTS</div>
   <h1>The Model Arena</h1>
   <p class="sub">We give frontier models the same prompt, one shot each, thinking modes on where
-  available. Each round below: the side-by-side cut on top, the real numbers underneath,
-  and every artifact playable — untouched, exactly as generated. Cost badges are computed
-  from actual token usage.</p>
+  available. Every round below is blind: vote for the render you think looks best, and every
+  contestant in that round reveals — model name, cost, time — the moment you vote. Every artifact
+  is playable, untouched, exactly as generated.</p>
 
-  <h2 id="round-6" style="margin-top:32px;">Guess the Model · Round 6 Bonus — Gargantua Redux</h2>
-  <p class="task">Same brief as Round 4, run again with a fourth contender — but this time the model
-  names are hidden. Look at the render, take your best guess, then see who actually made it.</p>
-
-  <div class="tally" id="tally">
-    <span>👁 <b id="tally-revealed">0</b>/4 revealed</span>
-    <span>·</span>
-    <span>✓ <b id="tally-correct">0</b> correct</span>
-  </div>
-
-  <div class="grid" id="blind-grid"></div>
-
-  <h2 id="round-1" style="margin-top:64px;">Round 1 · Fruit Ninja</h2>
-  <p class="task">Build a Fruit Ninja–style slicer as one self-contained HTML file — itemized art
-  checklist (wood-grain dojo, juice stains, glowing blade), reference screenshot attached,
-  auto-demo required.</p>
-  <video src="media/ep07-wide-clean.mp4" autoplay muted loop playsinline controls></video>
-  <div class="grid">
-    <a class="card" target="_blank" rel="noopener" href="games/fruit-ninja-kimi-k3.html">
-      <div class="model"><span class="dot" style="background:#38bdf8"></span>Kimi K3</div>
-      <div class="meta"><span class="badge">$1.13</span><span class="time">42 min · 1275 lines</span></div>
-      <div class="note">Max-effort reasoning (always on). Thought for 35 minutes before writing a single
-      line — 73% of its 75k output tokens were reasoning — then delivered the longest, juiciest build.</div>
-      <div class="play">▶ Try it</div>
-    </a>
-    <a class="card" target="_blank" rel="noopener" href="games/fruit-ninja-opus-4-8-think.html">
-      <div class="model"><span class="dot" style="background:#f97316"></span>Claude Opus 4.8 · think</div>
-      <div class="meta"><span class="badge">$0.55</span><span class="time">3.8 min · 1122 lines</span></div>
-      <div class="note">Extended thinking cost just $0.07 and 43 seconds more than the default run —
-      and visibly upgraded the fruit cross-sections and combo feedback.</div>
-      <div class="play">▶ Try it</div>
-    </a>
-    <a class="card" target="_blank" rel="noopener" href="games/fruit-ninja-gpt-5.6-sol.html">
-      <div class="model"><span class="dot" style="background:#a78bfa"></span>GPT-5.6 Sol</div>
-      <div class="meta"><span class="badge">$0.39</span><span class="time">12 min · 946 lines</span></div>
-      <div class="note">Default mode. Cheapest run of the three and the most detailed juice physics —
-      sliced pineapples keep their crowns.</div>
-      <div class="play">▶ Try it</div>
-    </a>
-  </div>
-
-  <h2 id="round-2">Round 2 · Crossy Road</h2>
-  <p class="task">Build a Crossy Road–style endless hopper as one self-contained HTML file —
-  procedurally generated lanes, cars, logs, trains — with an AI auto-play mode. First round
-  we ever ran; all three shipped a working game on the first shot.</p>
-  <video src="media/ep01-wide-clean.mp4" muted loop playsinline controls preload="metadata"></video>
-  <div class="grid">
-    <a class="card" target="_blank" rel="noopener" href="games/crossy-road-kimi-k3.html">
-      <div class="model"><span class="dot" style="background:#38bdf8"></span>Kimi K3</div>
-      <div class="meta"><span class="badge">$0.74</span><span class="time">9 min · 517 lines</span></div>
-      <div class="note">Plainest visuals of the three, but everything works. Its first attempt burned an
-      entire 32k-token budget on pure reasoning and wrote zero code — we had to raise the cap to 100k.</div>
-      <div class="play">▶ Try it</div>
-    </a>
-    <a class="card" target="_blank" rel="noopener" href="games/crossy-road-opus-4-8.html">
-      <div class="model"><span class="dot" style="background:#f97316"></span>Claude Opus 4.8</div>
-      <div class="meta"><span class="badge">$0.24</span><span class="time">2.5 min · 597 lines</span></div>
-      <div class="note">Cheapest run of the round with clean pixel art — though its self-play AI kept
-      walking into traffic.</div>
-      <div class="play">▶ Try it</div>
-    </a>
-    <a class="card" target="_blank" rel="noopener" href="games/crossy-road-gpt-5.6-sol.html">
-      <div class="model"><span class="dot" style="background:#a78bfa"></span>GPT-5.6 Sol</div>
-      <div class="meta"><span class="badge">$0.32</span><span class="time">2 min · 873 lines</span></div>
-      <div class="note">Fastest and best-looking of the round — its auto-play chicken learned to dodge
-      its way past 40 rows.</div>
-      <div class="play">▶ Try it</div>
-    </a>
-  </div>
-
-  <h2 id="round-3">Round 3 · Monument Valley</h2>
-  <p class="task">Recreate a Monument Valley screenshot — isometric impossible architecture, rotating
-  crank mechanic, pastel palette. Reference image attached, auto-demo required.</p>
-  <video src="media/ep04-wide-clean.mp4" muted loop playsinline controls preload="metadata"></video>
-  <div class="grid">
-    <a class="card" target="_blank" rel="noopener" href="games/monument-valley-claude-fable-5.html">
-      <div class="model"><span class="dot" style="background:#38bdf8"></span>Claude Fable 5</div>
-      <div class="meta"><span class="badge">$3.22</span><span class="time">15 min · 554 lines</span></div>
-      <div class="note">Priciest run of the round by far — spent it on a faithfully placed hexagonal
-      loop, onion domes and a working crank puzzle, all traced back to the reference screenshot.</div>
-      <div class="play">▶ Try it</div>
-    </a>
-    <a class="card" target="_blank" rel="noopener" href="games/monument-valley-gpt-5.6-sol.html">
-      <div class="model"><span class="dot" style="background:#22c55e"></span>GPT-5.6 Sol</div>
-      <div class="meta"><span class="badge">$0.31</span><span class="time">10 min · 1004 lines</span></div>
-      <div class="note">Cheapest, fastest, and most lines of the round. "The Silent Path" — a complete
-      Penrose loop with the princess waiting at the pressure plate.</div>
-      <div class="play">▶ Try it</div>
-    </a>
-    <a class="card" target="_blank" rel="noopener" href="games/monument-valley-kimi-k3.html">
-      <div class="model"><span class="dot" style="background:#f97316"></span>Kimi K3</div>
-      <div class="meta"><span class="badge">$1.50</span><span class="time">52 min · 534 lines</span></div>
-      <div class="note">Slowest run we've recorded — 86k reasoning tokens before a line of code, after
-      several earlier attempts died to rate limits and timeouts. Got there in the end: "Chapter
-      Complete — A Quiet Monument."</div>
-      <div class="play">▶ Try it</div>
-    </a>
-  </div>
-
-  <h2 id="round-4">Round 4 · Gargantua</h2>
-  <p class="task">Render <em>Interstellar</em>'s black hole in a single self-contained HTML file — a
-  fullscreen ray-marched shader bending light around a Schwarzschild metric, procedural accretion
-  disk, twin lensed rings, animated cinematic camera. Reference still attached, exposure discipline
-  enforced in the brief after an earlier attempt burned the whole frame white.</p>
-  <video src="media/ep10-wide-clean.mp4" muted loop playsinline controls preload="metadata"></video>
-  <div class="grid">
-    <a class="card" target="_blank" rel="noopener" href="games/gargantua-claude-fable-5.html">
-      <div class="model"><span class="dot" style="background:#f97316"></span>Claude Fable 5</div>
-      <div class="meta"><span class="badge">$1.39</span><span class="time">6 min · 357 lines</span></div>
-      <div class="note">Compiled and ran first try. ACES filmic tone mapping at 0.9 exposure rolls off
-      the highlights so the disk's inner edge burns white while the event-horizon shadow stays pure
-      black — plus 280 ray-march steps and a full animated camera move.</div>
-      <div class="play">▶ Try it</div>
-    </a>
-    <a class="card" target="_blank" rel="noopener" href="games/gargantua-qwen3.8-max-preview.html">
-      <div class="model"><span class="dot" style="background:#38bdf8"></span>Qwen3.8 Max</div>
-      <div class="meta"><span class="badge">$0.16</span><span class="time">16 min · 460 lines</span></div>
-      <div class="note">9× cheaper and out-details Fable's disk with denser 5-octave noise — but its
-      first attempt shipped a GLSL type mismatch (fbm called with a vec3 where it took a vec2) that
-      failed to compile into a black screen. Fixed, it skipped tone mapping entirely, so bloom floods
-      the core and washes out the shadow it needed to keep dark.</div>
-      <div class="play">▶ Try it</div>
-    </a>
-  </div>
-
-  <h2 id="round-5">Round 5 · HexGL Racer</h2>
-  <p class="task">Build a HexGL-style anti-gravity racer as one self-contained HTML file — sculpted
-  metal track over a hazy dusk sky, cyan glow trim, orange boost strips, UnrealBloomPass, HUD lap
-  timer and speed gauge. Screenshot-as-wallpaper visual bar, auto-demo required.</p>
-  <video src="media/ep08-vertical-clean.mp4" muted loop playsinline controls preload="metadata"></video>
-  <div class="grid">
-    <a class="card" target="_blank" rel="noopener" href="games/hexgl-claude-fable-5.html">
-      <div class="model"><span class="dot" style="background:#f97316"></span>Claude Fable 5</div>
-      <div class="meta"><span class="badge">$2.36</span><span class="time">10 min · 807 lines</span></div>
-      <div class="note">Shipped byte-for-byte identical to its raw output — ran clean first try. Loop-de-loop
-      track geometry, exposure-disciplined bloom, full HUD (lap timer, speed gauge, hex vignette).</div>
-      <div class="play">▶ Try it</div>
-    </a>
-    <a class="card" target="_blank" rel="noopener" href="games/hexgl-qwen3.8-max-preview.html">
-      <div class="model"><span class="dot" style="background:#38bdf8"></span>Qwen3.8 Max</div>
-      <div class="meta"><span class="badge">$0.15</span><span class="time">14 min · 650 lines</span></div>
-      <div class="note">16× cheaper — but its raw output called a Three.js method that doesn't exist
-      (<code>Vector3.addScaledVectors</code>, plural) in the track-spline generator. One-line manual
-      patch to two chained <code>addScaledVector()</code> calls and it ran.</div>
-      <div class="play">▶ Try it</div>
-    </a>
-  </div>
+  <div id="rounds"></div>
 
   <footer>
     Built with <a href="https://github.com/AIhubmix/model-showdown">model-showdown</a> —
@@ -280,6 +135,203 @@
   </footer>
 </div>
 <script>
+  function track(path) {
+    if (window.goatcounter && window.goatcounter.count) {
+      window.goatcounter.count({ path, event: true });
+    }
+  }
+
+  const ROUNDS = [
+    {
+      id: 1, title: `Round 1 · Gargantua Redux`, episode: "ep11",
+      summary: `Interstellar's black hole rendered in a single self-contained HTML file — a
+      fullscreen ray-marched shader bending light around a Schwarzschild metric, procedural
+      accretion disk, twin lensed rings, animated cinematic camera. Vote for the render you think
+      looks best — model names, cost, and time all reveal the moment you vote.`,
+      models: [
+        { letter: "a", name: `Claude Fable 5`, accent: "#f97316", cost: "$0.91", time: "~4 min",
+          note: `First try, no compile errors. Clean tone mapping keeps the disk's inner edge burning white while the shadow stays pure black.`,
+          poster: "media/posters/round1-a.png", game: "games/round1/a.html" },
+        { letter: "b", name: `GPT-5.6 Sol`, accent: "#a78bfa", cost: "$1.28", time: "~14 min",
+          note: `Heaviest reasoning spend of the round. Dense filament detail on the accretion disk.`,
+          poster: "media/posters/round1-b.png", game: "games/round1/b.html" },
+        { letter: "c", name: `Kimi K3`, accent: "#38bdf8", cost: "$0.50", time: "~18 min",
+          note: `Cheapest of the four. Simpler lensing rings but a solid, legible render.`,
+          poster: "media/posters/round1-c.png", game: "games/round1/c.html" },
+        { letter: "d", name: `Qwen3.8 Max`, accent: "#22c55e", cost: "~$0.18", time: "~35 min",
+          note: `The prompt's exposure-discipline clause exists because of a run exactly like this one — the whole frame blew out white.`,
+          poster: "media/posters/round1-d.png", game: "games/round1/d.html" },
+      ],
+    },
+    {
+      id: 2, title: `Round 2 · Fruit Ninja`, episode: "ep07",
+      summary: `Build a Fruit Ninja–style slicer as one self-contained HTML file — itemized art
+      checklist (wood-grain dojo, juice stains, glowing blade), reference screenshot attached,
+      auto-demo required.`,
+      models: [
+        { letter: "a", name: `Kimi K3`, accent: "#38bdf8", cost: "$1.13", time: "42 min · 1275 lines",
+          note: `Max-effort reasoning (always on). Thought for 35 minutes before writing a single line — 73% of its 75k output tokens were reasoning — then delivered the longest, juiciest build.`,
+          poster: "media/posters/round2-a.png", game: "games/round2/a.html" },
+        { letter: "b", name: `Claude Opus 4.8 · think`, accent: "#f97316", cost: "$0.55", time: "3.8 min · 1122 lines",
+          note: `Extended thinking cost just $0.07 and 43 seconds more than the default run — and visibly upgraded the fruit cross-sections and combo feedback.`,
+          poster: "media/posters/round2-b.png", game: "games/round2/b.html" },
+        { letter: "c", name: `GPT-5.6 Sol`, accent: "#a78bfa", cost: "$0.39", time: "12 min · 946 lines",
+          note: `Default mode. Cheapest run of the three and the most detailed juice physics — sliced pineapples keep their crowns.`,
+          poster: "media/posters/round2-c.png", game: "games/round2/c.html" },
+      ],
+    },
+    {
+      id: 3, title: `Round 3 · Crossy Road`, episode: "ep01",
+      summary: `Build a Crossy Road–style endless hopper as one self-contained HTML file —
+      procedurally generated lanes, cars, logs, trains — with an AI auto-play mode. First round
+      we ever ran; all three shipped a working game on the first shot.`,
+      models: [
+        { letter: "a", name: `Kimi K3`, accent: "#38bdf8", cost: "$0.74", time: "9 min · 517 lines",
+          note: `Plainest visuals of the three, but everything works. Its first attempt burned an entire 32k-token budget on pure reasoning and wrote zero code — we had to raise the cap to 100k.`,
+          poster: "media/posters/round3-a.png", game: "games/round3/a.html" },
+        { letter: "b", name: `Claude Opus 4.8`, accent: "#f97316", cost: "$0.24", time: "2.5 min · 597 lines",
+          note: `Cheapest run of the round with clean pixel art — though its self-play AI kept walking into traffic.`,
+          poster: "media/posters/round3-b.png", game: "games/round3/b.html" },
+        { letter: "c", name: `GPT-5.6 Sol`, accent: "#a78bfa", cost: "$0.32", time: "2 min · 873 lines",
+          note: `Fastest and best-looking of the round — its auto-play chicken learned to dodge its way past 40 rows.`,
+          poster: "media/posters/round3-c.png", game: "games/round3/c.html" },
+      ],
+    },
+    {
+      id: 4, title: `Round 4 · Monument Valley`, episode: "ep04",
+      summary: `Recreate a Monument Valley screenshot — isometric impossible architecture, rotating
+      crank mechanic, pastel palette. Reference image attached, auto-demo required.`,
+      models: [
+        { letter: "a", name: `Claude Fable 5`, accent: "#38bdf8", cost: "$3.22", time: "15 min · 554 lines",
+          note: `Priciest run of the round by far — spent it on a faithfully placed hexagonal loop, onion domes and a working crank puzzle, all traced back to the reference screenshot.`,
+          poster: "media/posters/round4-a.png", game: "games/round4/a.html" },
+        { letter: "b", name: `GPT-5.6 Sol`, accent: "#22c55e", cost: "$0.31", time: "10 min · 1004 lines",
+          note: `Cheapest, fastest, and most lines of the round. "The Silent Path" — a complete Penrose loop with the princess waiting at the pressure plate.`,
+          poster: "media/posters/round4-b.png", game: "games/round4/b.html" },
+        { letter: "c", name: `Kimi K3`, accent: "#f97316", cost: "$1.50", time: "52 min · 534 lines",
+          note: `Slowest run we've recorded — 86k reasoning tokens before a line of code, after several earlier attempts died to rate limits and timeouts. Got there in the end: "Chapter Complete — A Quiet Monument."`,
+          poster: "media/posters/round4-c.png", game: "games/round4/c.html" },
+      ],
+    },
+    {
+      id: 5, title: `Round 5 · HexGL Racer`, episode: "ep08",
+      summary: `Build a HexGL-style anti-gravity racer as one self-contained HTML file — sculpted
+      metal track over a hazy dusk sky, cyan glow trim, orange boost strips, UnrealBloomPass, HUD
+      lap timer and speed gauge. Screenshot-as-wallpaper visual bar, auto-demo required.`,
+      models: [
+        { letter: "a", name: `Claude Fable 5`, accent: "#f97316", cost: "$2.36", time: "10 min · 807 lines",
+          note: `Shipped byte-for-byte identical to its raw output — ran clean first try. Loop-de-loop track geometry, exposure-disciplined bloom, full HUD (lap timer, speed gauge, hex vignette).`,
+          poster: "media/posters/round5-a.png", game: "games/round5/a.html" },
+        { letter: "b", name: `Qwen3.8 Max`, accent: "#38bdf8", cost: "$0.15", time: "14 min · 650 lines",
+          note: `16× cheaper — but its raw output called a Three.js method that doesn't exist (<code>Vector3.addScaledVectors</code>, plural) in the track-spline generator. One-line manual patch to two chained <code>addScaledVector()</code> calls and it ran.`,
+          poster: "media/posters/round5-b.png", game: "games/round5/b.html" },
+      ],
+    },
+  ];
+
+  const roundsEl = document.getElementById("rounds");
+  const roundState = {};
+
+  ROUNDS.forEach((round) => {
+    roundState[round.id] = { revealed: false, votedLetter: null };
+
+    const h2 = document.createElement("h2");
+    h2.id = "round-" + round.id;
+    h2.textContent = round.title;
+    roundsEl.appendChild(h2);
+
+    const p = document.createElement("p");
+    p.className = "task";
+    p.textContent = round.summary.replace(/\s+/g, " ").trim();
+    roundsEl.appendChild(p);
+
+    const grid = document.createElement("div");
+    grid.className = "grid round-grid";
+    grid.style.setProperty("--cols", round.models.length);
+    grid.id = "round-" + round.id + "-grid";
+
+    round.models.forEach((m) => {
+      const card = document.createElement("div");
+      card.className = "mystery-card";
+      card.id = "r" + round.id + "-" + m.letter;
+      card.innerHTML = `
+        <div class="poster-wrap" id="poster-r${round.id}-${m.letter}">
+          <img src="${m.poster}" alt="mystery render">
+          <div class="contestant-tag">CONTESTANT ${m.letter.toUpperCase()}</div>
+          <button class="preview-btn" data-round="${round.id}" data-slot="${m.letter}">▶ Preview</button>
+        </div>
+        <div class="card-body">
+          <div class="card-actions">
+            <a class="open-full" href="${m.game}" target="_blank" rel="noopener">Source ↗</a>
+            <button class="vote-btn" data-round="${round.id}" data-slot="${m.letter}">Vote this one</button>
+          </div>
+        </div>
+      `;
+      grid.appendChild(card);
+    });
+
+    roundsEl.appendChild(grid);
+  });
+
+  function findRound(id) { return ROUNDS.find((r) => r.id === Number(id)); }
+  function findModel(round, letter) { return round.models.find((m) => m.letter === letter); }
+
+  roundsEl.addEventListener("click", (e) => {
+    const previewBtn = e.target.closest(".preview-btn");
+    if (previewBtn) {
+      const roundId = previewBtn.dataset.round;
+      const slot = previewBtn.dataset.slot;
+      const round = findRound(roundId);
+      const m = findModel(round, slot);
+      const posterWrap = document.getElementById(`poster-r${roundId}-${slot}`);
+      const iframe = document.createElement("iframe");
+      iframe.src = m.game;
+      iframe.sandbox = "allow-scripts allow-pointer-lock";
+      posterWrap.querySelector("img").replaceWith(iframe);
+      previewBtn.remove();
+      track(`preview-round${roundId}-${slot}`);
+      return;
+    }
+
+    const voteBtn = e.target.closest(".vote-btn");
+    if (voteBtn) {
+      const roundId = voteBtn.dataset.round;
+      const slot = voteBtn.dataset.slot;
+      const round = findRound(roundId);
+      const state = roundState[round.id];
+      if (state.revealed) return;
+      state.revealed = true;
+      state.votedLetter = slot;
+
+      round.models.forEach((m) => {
+        const cardEl = document.getElementById("r" + round.id + "-" + m.letter);
+        cardEl.classList.add("revealed");
+        const tag = cardEl.querySelector(".contestant-tag");
+        if (tag) tag.textContent = m.name.toUpperCase();
+        const voted = m.letter === slot;
+        if (voted) {
+          cardEl.querySelector(".poster-wrap").insertAdjacentHTML("beforeend", `<div class="verdict correct">✓ Your vote</div>`);
+        }
+        cardEl.querySelector(".card-body").innerHTML = `
+          <div class="model"><span class="dot" style="background:${m.accent}"></span>${m.name}</div>
+          <div class="meta"><span class="badge">${m.cost}</span><span class="time">${m.time}</span></div>
+          <div class="note">${m.note}</div>
+          <div class="card-actions">
+            <a class="open-full" href="${m.game}" target="_blank" rel="noopener">Source ↗</a>
+          </div>
+        `;
+      });
+
+      track(`vote-round${round.id}-${findModel(round, slot).name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`);
+      return;
+    }
+
+    const openFull = e.target.closest(".open-full");
+    if (openFull) {
+      track("open-full-" + openFull.getAttribute("href").replace(/^games\//, "").replace(/\.html$/, "").replace(/\//g, "-"));
+    }
+  });
+
   const rail = document.getElementById("rail");
   const headings = Array.from(document.querySelectorAll("h2[id]"));
   headings.forEach((h) => {
@@ -301,121 +353,6 @@
     });
   }, { rootMargin: "-40% 0px -50% 0px" });
   headings.forEach((h) => observer.observe(h));
-
-  function track(path) {
-    if (window.goatcounter && window.goatcounter.count) {
-      window.goatcounter.count({ path, event: true });
-    }
-  }
-
-  const CANDIDATES = ["Claude Fable 5", "GPT-5.6 Sol", "Kimi K3", "Qwen3.8 Max"];
-  const ACCENTS = { "Claude Fable 5": "#f97316", "GPT-5.6 Sol": "#a78bfa", "Kimi K3": "#38bdf8", "Qwen3.8 Max": "#22c55e" };
-
-  const CARDS = [
-    {
-      id: "a", poster: "media/proto/poster-a.png", game: "games/proto/proto-a.html", answer: "Claude Fable 5",
-      cost: "$0.91", time: "~4 min",
-      note: "First try, no compile errors. Clean tone mapping keeps the disk's inner edge burning white while the shadow stays pure black."
-    },
-    {
-      id: "b", poster: "media/proto/poster-b.png", game: "games/proto/proto-b.html", answer: "GPT-5.6 Sol",
-      cost: "$1.28", time: "~14 min",
-      note: "Heaviest reasoning spend of the round. Dense filament detail on the accretion disk."
-    },
-    {
-      id: "c", poster: "media/proto/poster-c.png", game: "games/proto/proto-c.html", answer: "Kimi K3",
-      cost: "$0.50", time: "~18 min",
-      note: "Cheapest of the four. Simpler lensing rings but a solid, legible render."
-    },
-    {
-      id: "d", poster: "media/proto/poster-d.png", game: "games/proto/proto-d.html", answer: "Qwen3.8 Max",
-      cost: "~$0.18", time: "~35 min",
-      note: "The prompt's exposure-discipline clause exists because of a run exactly like this one — the whole frame blew out white."
-    },
-  ];
-
-  const blindGrid = document.getElementById("blind-grid");
-  const blindState = {};
-
-  CARDS.forEach((c) => {
-    blindState[c.id] = { revealed: false, correct: null };
-    const card = document.createElement("div");
-    card.className = "mystery-card";
-    card.id = "card-" + c.id;
-    card.innerHTML = `
-      <div class="poster-wrap" id="poster-${c.id}">
-        <img src="${c.poster}" alt="mystery render">
-        <div class="contestant-tag">CONTESTANT ${c.id.toUpperCase()}</div>
-        <button class="preview-btn" data-preview="${c.id}">▶ Preview</button>
-      </div>
-      <div class="card-body">
-        <div class="guess-zone">
-          <div class="guess-row">
-            ${CANDIDATES.map(name => `<button class="guess-btn" data-card="${c.id}" data-guess="${name}">${name}</button>`).join("")}
-          </div>
-        </div>
-      </div>
-    `;
-    blindGrid.appendChild(card);
-  });
-
-  blindGrid.addEventListener("click", (e) => {
-    const previewBtn = e.target.closest(".preview-btn");
-    if (previewBtn) {
-      const cardId = previewBtn.dataset.preview;
-      const c = CARDS.find(x => x.id === cardId);
-      const posterWrap = document.getElementById("poster-" + cardId);
-      const iframe = document.createElement("iframe");
-      iframe.src = c.game;
-      iframe.sandbox = "allow-scripts allow-pointer-lock";
-      posterWrap.querySelector("img").replaceWith(iframe);
-      previewBtn.remove();
-      track("blind-preview-" + cardId);
-      return;
-    }
-
-    const btn = e.target.closest(".guess-btn");
-    if (!btn) return;
-    const cardId = btn.dataset.card;
-    if (blindState[cardId].revealed) return;
-    const guess = btn.dataset.guess;
-    const c = CARDS.find(x => x.id === cardId);
-    const correct = guess === c.answer;
-    blindState[cardId] = { revealed: true, correct };
-
-    const cardEl = document.getElementById("card-" + cardId);
-    cardEl.classList.add("revealed");
-    cardEl.querySelector(".contestant-tag").textContent = c.answer.toUpperCase();
-    cardEl.querySelector(".card-body").innerHTML = `
-      <div class="model"><span class="dot" style="background:${ACCENTS[c.answer]}"></span>${c.answer}</div>
-      <div class="meta"><span class="badge">${c.cost}</span><span class="time">${c.time}</span></div>
-      <div class="note">${c.note}</div>
-      <div class="verdict ${correct ? "correct" : "wrong"}">${correct ? "✓ Correct!" : `✗ Wrong — it was actually ${c.answer}`}</div>
-      <a class="open-full" data-card="${c.id}" href="${c.game}" target="_blank" rel="noopener">Open full / view source ↗</a>
-    `;
-    track(correct ? "blind-guess-correct" : "blind-guess-wrong");
-    updateTally();
-  });
-
-  document.addEventListener("click", (e) => {
-    const openFull = e.target.closest(".open-full");
-    if (openFull) {
-      track("blind-open-full-" + openFull.dataset.card);
-      return;
-    }
-    const card = e.target.closest("a.card");
-    if (card) {
-      const slug = card.getAttribute("href").replace(/^games\//, "").replace(/\.html$/, "");
-      track("try-it-" + slug);
-    }
-  });
-
-  function updateTally() {
-    const revealed = Object.values(blindState).filter(s => s.revealed);
-    const correct = revealed.filter(s => s.correct).length;
-    document.getElementById("tally-revealed").textContent = revealed.length;
-    document.getElementById("tally-correct").textContent = correct;
-  }
 </script>
 </body>
 </html>

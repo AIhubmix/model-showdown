@@ -1,0 +1,873 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Pixel Crossroads</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body {
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    overflow: hidden;
+    background: #10131a;
+  }
+  body {
+    display: grid;
+    place-items: center;
+    font-family: monospace;
+  }
+  canvas {
+    display: block;
+    width: min(100vw, 720px, calc(100vh * 0.75));
+    height: min(100vh, 960px, calc(100vw * 1.333333));
+    background: #66b846;
+    image-rendering: pixelated;
+    box-shadow:
+      0 0 0 4px #252b38,
+      0 18px 70px rgba(0,0,0,.7);
+    touch-action: none;
+  }
+</style>
+</head>
+<body>
+<canvas id="game" width="720" height="960" aria-label="Pixel Crossroads arcade game"></canvas>
+
+<script>
+(() => {
+  "use strict";
+
+  const canvas = document.getElementById("game");
+  const ctx = canvas.getContext("2d", { alpha: false });
+  ctx.imageSmoothingEnabled = false;
+
+  const W = 720;
+  const H = 960;
+  const TILE = 72;
+  const COLS = 10;
+  const PLAYER_BASE_Y = H - 180;
+  const HOP_TIME = 0.145;
+  const TRAIN_PERIOD = 8.5;
+  const TRAIN_WARN_START = 4.25;
+  const TRAIN_START = 6.1;
+  const TRAIN_END = 7.05;
+
+  let lanes = [];
+  let rngState = 1;
+  let bandType = "grass";
+  let bandRemaining = 0;
+
+  let state = "playing";
+  let autoMode = true;
+  let autoReadyAt = 0;
+  let autoThink = 0;
+  let restartAt = 0;
+  let lastTime = performance.now();
+  let runTime = 0;
+  let cameraRow = 0;
+  let score = 0;
+  let bestScore = 0;
+  let deathReason = "";
+  let screenFlash = 0;
+  let particles = [];
+
+  const player = {
+    x: W / 2,
+    row: 0,
+    fromX: W / 2,
+    toX: W / 2,
+    fromRow: 0,
+    toRow: 0,
+    hopT: 0,
+    hopping: false,
+    facing: "up"
+  };
+
+  function mod(n, m) {
+    return ((n % m) + m) % m;
+  }
+
+  function rand() {
+    rngState = (Math.imul(rngState, 1664525) + 1013904223) >>> 0;
+    return rngState / 4294967296;
+  }
+
+  function randInt(a, b) {
+    return a + Math.floor(rand() * (b - a + 1));
+  }
+
+  function choice(a) {
+    return a[Math.floor(rand() * a.length)];
+  }
+
+  function rowY(row) {
+    return PLAYER_BASE_Y - (row - cameraRow) * TILE;
+  }
+
+  function makeGrass(row, starter = false) {
+    const trees = [];
+    if (!starter) {
+      for (let col = 0; col < COLS; col++) {
+        if (rand() < 0.19) trees.push(col);
+      }
+      while (trees.length > 6) trees.splice(randInt(0, trees.length - 1), 1);
+      if (trees.length >= COLS - 2) trees.length = 5;
+    }
+    return {
+      row,
+      type: "grass",
+      trees,
+      tint: rand() < 0.5 ? 0 : 1
+    };
+  }
+
+  function makeRoad(row) {
+    const direction = rand() < 0.5 ? -1 : 1;
+    const speed = direction * randInt(125, 235);
+    const vehicleCount = randInt(3, 4);
+    const vehicles = [];
+    const spacing = randInt(230, 310);
+
+    for (let i = 0; i < vehicleCount; i++) {
+      const truck = rand() < 0.3;
+      vehicles.push({
+        baseX: i * spacing + randInt(-40, 40),
+        width: truck ? randInt(125, 158) : randInt(82, 108),
+        height: truck ? 50 : 42,
+        truck,
+        color: choice(["#ed4747", "#ffca3a", "#35c9e8", "#9c6ade", "#ff7b35", "#f25ca2"])
+      });
+    }
+
+    return {
+      row,
+      type: "road",
+      direction,
+      speed,
+      vehicles,
+      wrap: vehicleCount * spacing + 150,
+      marksOffset: randInt(0, 80)
+    };
+  }
+
+  function makeRiver(row) {
+    const direction = rand() < 0.5 ? -1 : 1;
+    const speed = direction * randInt(42, 75);
+    const count = 3;
+    const spacing = randInt(275, 330);
+    const logs = [];
+
+    for (let i = 0; i < count; i++) {
+      logs.push({
+        baseX: i * spacing + randInt(-35, 35),
+        width: randInt(190, 255)
+      });
+    }
+
+    return {
+      row,
+      type: "river",
+      direction,
+      speed,
+      logs,
+      wrap: count * spacing + 170,
+      waveOffset: randInt(0, 100)
+    };
+  }
+
+  function makeRail(row) {
+    return {
+      row,
+      type: "rail",
+      direction: rand() < 0.5 ? -1 : 1,
+      offset: rand() * TRAIN_PERIOD
+    };
+  }
+
+  function chooseBand() {
+    const r = rand();
+    if (r < 0.30) {
+      bandType = "grass";
+      bandRemaining = randInt(1, 2);
+    } else if (r < 0.64) {
+      bandType = "road";
+      bandRemaining = randInt(1, 3);
+    } else if (r < 0.88) {
+      bandType = "river";
+      bandRemaining = randInt(1, 2);
+    } else {
+      bandType = "rail";
+      bandRemaining = 1;
+    }
+  }
+
+  function generateTo(row) {
+    while (lanes.length <= row) {
+      const index = lanes.length;
+
+      if (index < 4) {
+        lanes.push(makeGrass(index, index === 0));
+        continue;
+      }
+
+      if (bandRemaining <= 0) chooseBand();
+
+      let lane;
+      if (bandType === "road") lane = makeRoad(index);
+      else if (bandType === "river") lane = makeRiver(index);
+      else if (bandType === "rail") lane = makeRail(index);
+      else lane = makeGrass(index);
+
+      lanes.push(lane);
+      bandRemaining--;
+
+      if (bandRemaining <= 0 && bandType !== "grass" && rand() < 0.72) {
+        bandType = "grass";
+        bandRemaining = 1;
+      }
+    }
+  }
+
+  function getLane(row) {
+    if (row < 0) return makeGrass(row, true);
+    generateTo(row);
+    return lanes[row];
+  }
+
+  function entityX(baseX, speed, width, wrap, time = runTime) {
+    return mod(baseX + speed * time + width, wrap) - width;
+  }
+
+  function trainPhase(lane, time = runTime) {
+    return mod(time + lane.offset, TRAIN_PERIOD);
+  }
+
+  function trainRect(lane, time = runTime) {
+    const phase = trainPhase(lane, time);
+    if (phase < TRAIN_START || phase > TRAIN_END) return null;
+
+    const p = (phase - TRAIN_START) / (TRAIN_END - TRAIN_START);
+    const width = 790;
+    let x = -width + p * (W + width * 2);
+
+    if (lane.direction < 0) {
+      x = W + width - p * (W + width * 2);
+    }
+    return { x, width };
+  }
+
+  function resetGame(initial = false) {
+    rngState = ((Date.now() ^ (Math.random() * 0xffffffff)) >>> 0) || 1;
+    lanes = [];
+    bandType = "grass";
+    bandRemaining = 0;
+    generateTo(22);
+
+    state = "playing";
+    runTime = 0;
+    cameraRow = 0;
+    score = 0;
+    deathReason = "";
+    screenFlash = 0;
+    particles.length = 0;
+
+    player.x = W / 2;
+    player.row = 0;
+    player.fromX = player.x;
+    player.toX = player.x;
+    player.fromRow = 0;
+    player.toRow = 0;
+    player.hopT = 0;
+    player.hopping = false;
+    player.facing = "up";
+
+    autoMode = true;
+    autoThink = 0;
+    autoReadyAt = performance.now() + (initial ? 1000 : 0);
+  }
+
+  function overlaps(a1, a2, b1, b2) {
+    return a2 > b1 && a1 < b2;
+  }
+
+  function treeBlocks(lane, x) {
+    if (lane.type !== "grass") return false;
+    for (const col of lane.trees) {
+      const cx = col * TILE + TILE / 2;
+      if (Math.abs(x - cx) < 43) return true;
+    }
+    return false;
+  }
+
+  function logAt(lane, x, time, margin = 17) {
+    for (const log of lane.logs) {
+      const lx = entityX(log.baseX, lane.speed, log.width, lane.wrap, time);
+      if (x >= lx + margin && x <= lx + log.width - margin) {
+        return { log, x: lx };
+      }
+    }
+    return null;
+  }
+
+  function roadDanger(lane, x, time, margin = 20) {
+    for (const vehicle of lane.vehicles) {
+      const vx = entityX(vehicle.baseX, lane.speed, vehicle.width, lane.wrap, time);
+      if (overlaps(x - margin, x + margin, vx, vx + vehicle.width)) return true;
+    }
+    return false;
+  }
+
+  function railDanger(lane, x, time, cautious = false) {
+    const phase = trainPhase(lane, time);
+    if (cautious && phase >= TRAIN_WARN_START && phase <= TRAIN_END + 0.25) return true;
+    const train = trainRect(lane, time);
+    return !!train && overlaps(x - 22, x + 22, train.x, train.x + train.width);
+  }
+
+  function safeTarget(row, x, arrival = HOP_TIME, cautiousRail = true) {
+    if (x < TILE / 2 || x > W - TILE / 2 || row < 0) return false;
+
+    const lane = getLane(row);
+    const time = runTime + arrival;
+
+    if (lane.type === "grass") return !treeBlocks(lane, x);
+    if (lane.type === "road") return !roadDanger(lane, x, time, 26);
+    if (lane.type === "river") return !!logAt(lane, x, time, 24);
+    if (lane.type === "rail") return !railDanger(lane, x, time, cautiousRail);
+    return true;
+  }
+
+  function beginHop(dx, dr, facing) {
+    if (state !== "playing" || player.hopping) return false;
+
+    const targetX = player.x + dx * TILE;
+    const targetRow = player.row + dr;
+
+    if (targetX < TILE / 2 || targetX > W - TILE / 2 || targetRow < 0) return false;
+    if (treeBlocks(getLane(targetRow), targetX)) return false;
+
+    player.fromX = player.x;
+    player.toX = targetX;
+    player.fromRow = player.row;
+    player.toRow = targetRow;
+    player.hopT = 0;
+    player.hopping = true;
+    player.facing = facing;
+    return true;
+  }
+
+  function kill(reason) {
+    if (state !== "playing") return;
+
+    state = "over";
+    deathReason = reason;
+    bestScore = Math.max(bestScore, score);
+    restartAt = performance.now() + 2000;
+    screenFlash = 1;
+
+    for (let i = 0; i < 18; i++) {
+      particles.push({
+        x: player.x,
+        y: rowY(player.row) - 15,
+        vx: (Math.random() - 0.5) * 240,
+        vy: -Math.random() * 220 - 40,
+        life: 0.45 + Math.random() * 0.55,
+        color: choice(["#ffffff", "#f5e9b8", "#ef3d4d", "#ffca3a"])
+      });
+    }
+  }
+
+  function checkStanding() {
+    if (state !== "playing" || player.hopping) return;
+
+    const lane = getLane(player.row);
+
+    if (lane.type === "road" && roadDanger(lane, player.x, runTime, 21)) {
+      kill("SQUASHED!");
+      return;
+    }
+
+    if (lane.type === "river" && !logAt(lane, player.x, runTime, 15)) {
+      kill("SPLASH!");
+      return;
+    }
+
+    if (lane.type === "rail" && railDanger(lane, player.x, runTime, false)) {
+      kill("EXPRESS DELIVERY!");
+    }
+  }
+
+  function autoStep() {
+    if (!autoMode || state !== "playing" || player.hopping) return;
+    if (performance.now() < autoReadyAt) return;
+    if (autoThink > 0) return;
+
+    autoThink = 0.045;
+
+    const x = player.x;
+    const row = player.row;
+    const current = getLane(row);
+
+    if (safeTarget(row + 1, x, HOP_TIME, true)) {
+      beginHop(0, 1, "up");
+      return;
+    }
+
+    const candidates = [];
+    for (const dir of [-1, 1]) {
+      const nx = x + dir * TILE;
+      if (!safeTarget(row, nx, HOP_TIME, true)) continue;
+
+      let value = 1;
+      if (safeTarget(row + 1, nx, HOP_TIME * 2 + 0.04, true)) value += 8;
+      if (safeTarget(row + 2, nx, HOP_TIME * 3 + 0.08, true)) value += 2;
+      if (nx > TILE && nx < W - TILE) value += 0.4;
+      value += Math.random() * 0.3;
+      candidates.push({ dir, value });
+    }
+
+    candidates.sort((a, b) => b.value - a.value);
+
+    if (candidates.length) {
+      const d = candidates[0].dir;
+      beginHop(d, 0, d < 0 ? "left" : "right");
+      return;
+    }
+
+    if (current.type === "road" || current.type === "rail") {
+      if (safeTarget(row - 1, x, HOP_TIME, true)) {
+        beginHop(0, -1, "down");
+      }
+    }
+  }
+
+  function update(dt, now) {
+    screenFlash = Math.max(0, screenFlash - dt * 2.8);
+
+    for (let i = particles.length - 1; i >= 0; i--) {
+      const p = particles[i];
+      p.life -= dt;
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      p.vy += 500 * dt;
+      if (p.life <= 0) particles.splice(i, 1);
+    }
+
+    if (state === "over") {
+      if (now >= restartAt) resetGame(false);
+      return;
+    }
+
+    runTime += dt;
+    autoThink -= dt;
+    generateTo(Math.max(20, score + 18));
+
+    if (player.hopping) {
+      player.hopT += dt / HOP_TIME;
+
+      if (player.hopT >= 1) {
+        player.hopT = 1;
+        player.hopping = false;
+        player.x = player.toX;
+        player.row = player.toRow;
+
+        if (player.row > score) score = player.row;
+        bestScore = Math.max(bestScore, score);
+        checkStanding();
+      }
+    } else {
+      const lane = getLane(player.row);
+
+      if (lane.type === "river") {
+        const support = logAt(lane, player.x, runTime, 10);
+        if (support) player.x += lane.speed * dt;
+      }
+
+      if (player.x < -20 || player.x > W + 20) {
+        kill("SWEPT AWAY!");
+      } else {
+        checkStanding();
+      }
+    }
+
+    const chaseCamera = Math.max(0, score - 3);
+    const creepingCamera = Math.max(0, (runTime - 9) * 0.075);
+    const targetCamera = Math.max(chaseCamera, creepingCamera);
+    cameraRow += Math.max(0, targetCamera - cameraRow) * Math.min(1, dt * 8);
+
+    const playerScreenY = rowY(player.row);
+    if (playerScreenY > H + 35) kill("LEFT BEHIND!");
+
+    autoStep();
+  }
+
+  function rect(x, y, w, h, color) {
+    ctx.fillStyle = color;
+    ctx.fillRect(Math.round(x), Math.round(y), Math.round(w), Math.round(h));
+  }
+
+  function text(str, x, y, size, color = "#fff", align = "left") {
+    ctx.font = `bold ${size}px monospace`;
+    ctx.textAlign = align;
+    ctx.textBaseline = "top";
+    ctx.fillStyle = "#17202a";
+    ctx.fillText(str, x + 3, y + 4);
+    ctx.fillStyle = color;
+    ctx.fillText(str, x, y);
+  }
+
+  function drawGrass(lane, top) {
+    const c1 = lane.tint ? "#69bd49" : "#61b744";
+    const c2 = lane.tint ? "#75c852" : "#6bc14b";
+    rect(0, top, W, TILE, c1);
+    rect(0, top, W, 8, c2);
+
+    for (let x = 18 + mod(lane.row * 31, 53); x < W; x += 83) {
+      rect(x, top + 18 + mod(x + lane.row * 9, 30), 10, 5, "#4d9d38");
+      rect(x + 5, top + 14 + mod(x + lane.row * 9, 30), 5, 7, "#83d45b");
+    }
+  }
+
+  function drawRoad(lane, top) {
+    rect(0, top, W, TILE, "#363c45");
+    rect(0, top, W, 7, "#242a32");
+    rect(0, top + TILE - 7, W, 7, "#242a32");
+
+    for (let x = -100 + mod(lane.marksOffset, 110); x < W + 100; x += 110) {
+      rect(x, top + 33, 54, 7, "#d8d4a6");
+    }
+  }
+
+  function drawRiver(lane, top) {
+    rect(0, top, W, TILE, "#278cc4");
+    rect(0, top, W, 8, "#42abe0");
+
+    for (let x = -80 + mod(lane.waveOffset + lane.row * 19, 100); x < W; x += 100) {
+      rect(x, top + 21, 39, 5, "#55b6e5");
+      rect(x + 26, top + 47, 50, 5, "#1976ad");
+    }
+  }
+
+  function drawRail(lane, top) {
+    rect(0, top, W, TILE, "#766f65");
+    for (let x = -10; x < W; x += 40) rect(x, top + 7, 18, 58, "#51483f");
+    rect(0, top + 16, W, 8, "#c3c4c1");
+    rect(0, top + 48, W, 8, "#c3c4c1");
+    rect(0, top + 19, W, 3, "#444b50");
+    rect(0, top + 51, W, 3, "#444b50");
+  }
+
+  function drawTree(col, top) {
+    const x = col * TILE + TILE / 2;
+    rect(x - 11, top + 37, 22, 33, "#704326");
+    rect(x - 27, top + 10, 54, 44, "#206b36");
+    rect(x - 20, top + 3, 40, 51, "#2e8b43");
+    rect(x - 11, top + 7, 21, 14, "#54ac50");
+    rect(x - 25, top + 31, 12, 15, "#185b30");
+  }
+
+  function drawLog(x, top, width) {
+    rect(x, top + 18, width, 40, "#7a4225");
+    rect(x + 8, top + 13, width - 16, 38, "#98562c");
+    rect(x + 18, top + 21, width - 36, 7, "#b56d36");
+    rect(x + 25, top + 36, width - 52, 6, "#713a22");
+    rect(x + 2, top + 22, 12, 29, "#542e20");
+    rect(x + width - 14, top + 22, 12, 29, "#542e20");
+  }
+
+  function drawVehicle(x, top, vehicle, direction) {
+    const y = top + (TILE - vehicle.height) / 2;
+    const w = vehicle.width;
+    const h = vehicle.height;
+
+    rect(x + 4, y + h - 7, w - 8, 10, "#151a20");
+    rect(x, y + 7, w, h - 12, vehicle.color);
+
+    if (vehicle.truck) {
+      const cabW = 42;
+      const cabX = direction > 0 ? x + w - cabW : x;
+      rect(cabX, y + 2, cabW, h - 7, vehicle.color);
+      rect(
+        direction > 0 ? cabX + 21 : cabX + 5,
+        y + 8, 15, 13, "#bce8f2"
+      );
+      rect(
+        direction > 0 ? x + 8 : x + cabW + 7,
+        y + 12, w - cabW - 16, 7, "rgba(255,255,255,.18)"
+      );
+    } else {
+      rect(x + 20, y, w - 40, 14, vehicle.color);
+      rect(x + 27, y + 4, w - 54, 12, "#bce8f2");
+      if (direction > 0) rect(x + w - 7, y + 19, 7, 11, "#fff0a6");
+      else rect(x, y + 19, 7, 11, "#fff0a6");
+    }
+
+    rect(x + 13, y + h - 4, 18, 8, "#10151b");
+    rect(x + w - 31, y + h - 4, 18, 8, "#10151b");
+  }
+
+  function drawRailSignal(lane, top) {
+    const phase = trainPhase(lane);
+    const warning = phase >= TRAIN_WARN_START && phase < TRAIN_START;
+    const active = phase >= TRAIN_START && phase <= TRAIN_END;
+    const lit = active || (warning && Math.floor(runTime * 7) % 2 === 0);
+
+    rect(14, top - 7, 10, 56, "#292d31");
+    rect(5, top - 16, 29, 31, "#171a1d");
+    rect(11, top - 10, 17, 17, lit ? "#ff334b" : "#672c34");
+    if (lit) rect(14, top - 7, 11, 11, "#ff9d9d");
+  }
+
+  function drawTrain(lane, top) {
+    const train = trainRect(lane);
+    if (!train) return;
+
+    const x = train.x;
+    const w = train.width;
+    rect(x, top + 3, w, TILE - 6, "#20252b");
+    rect(x + 8, top + 8, w - 16, TILE - 18, "#df3547");
+    rect(x + 8, top + 12, w - 16, 12, "#f3c941");
+    rect(x + 25, top + 29, w - 50, 20, "#8ed4e5");
+
+    for (let wx = x + 34; wx < x + w - 30; wx += 68) {
+      rect(wx, top + 30, 40, 17, "#bdebf3");
+      rect(wx + 4, top + 34, 32, 9, "#5e9eb0");
+    }
+
+    const noseX = lane.direction > 0 ? x + w - 20 : x;
+    rect(noseX, top + 17, 20, 38, "#f3c941");
+    rect(x + 15, top + 57, w - 30, 8, "#11161b");
+  }
+
+  function drawLane(lane) {
+    const center = rowY(lane.row);
+    const top = center - TILE / 2;
+
+    if (lane.type === "grass") drawGrass(lane, top);
+    else if (lane.type === "road") drawRoad(lane, top);
+    else if (lane.type === "river") drawRiver(lane, top);
+    else drawRail(lane, top);
+  }
+
+  function drawLaneObjects(lane) {
+    const center = rowY(lane.row);
+    const top = center - TILE / 2;
+
+    if (lane.type === "grass") {
+      for (const col of lane.trees) drawTree(col, top);
+    } else if (lane.type === "road") {
+      for (const vehicle of lane.vehicles) {
+        const x = entityX(vehicle.baseX, lane.speed, vehicle.width, lane.wrap);
+        drawVehicle(x, top, vehicle, lane.direction);
+      }
+    } else if (lane.type === "river") {
+      for (const log of lane.logs) {
+        const x = entityX(log.baseX, lane.speed, log.width, lane.wrap);
+        drawLog(x, top, log.width);
+      }
+    } else if (lane.type === "rail") {
+      drawRailSignal(lane, top);
+      drawTrain(lane, top);
+    }
+  }
+
+  function drawChicken() {
+    let x = player.x;
+    let row = player.row;
+    let hop = 0;
+
+    if (player.hopping) {
+      const p = Math.min(1, player.hopT);
+      const eased = p * p * (3 - 2 * p);
+      x = player.fromX + (player.toX - player.fromX) * eased;
+      row = player.fromRow + (player.toRow - player.fromRow) * eased;
+      hop = Math.sin(p * Math.PI) * 22;
+    }
+
+    const y = rowY(row) - hop;
+    const shadowScale = 1 - hop / 80;
+
+    ctx.globalAlpha = 0.27;
+    rect(x - 25 * shadowScale, y + 20, 50 * shadowScale, 13, "#101820");
+    ctx.globalAlpha = 1;
+
+    const bob = player.hopping ? 0 : Math.round(Math.sin(runTime * 8) * 2);
+    const cy = y - 21 + bob;
+
+    rect(x - 20, cy - 18, 40, 42, "#f6f1d7");
+    rect(x - 15, cy - 24, 30, 13, "#fffbed");
+    rect(x - 25, cy - 8, 11, 24, "#ded9bd");
+    rect(x + 14, cy - 8, 11, 24, "#ded9bd");
+
+    let eyeLeft = x - 9;
+    let eyeRight = x + 7;
+    if (player.facing === "left") {
+      eyeLeft -= 5;
+      eyeRight -= 5;
+    } else if (player.facing === "right") {
+      eyeLeft += 5;
+      eyeRight += 5;
+    }
+
+    rect(eyeLeft, cy - 18, 6, 7, "#20242a");
+    rect(eyeRight, cy - 18, 6, 7, "#20242a");
+
+    if (player.facing === "left") {
+      rect(x - 28, cy - 10, 13, 9, "#f2a72e");
+    } else if (player.facing === "right") {
+      rect(x + 15, cy - 10, 13, 9, "#f2a72e");
+    } else {
+      rect(x - 8, cy - 9, 16, 10, "#f2a72e");
+    }
+
+    rect(x - 10, cy - 30, 8, 9, "#e74643");
+    rect(x - 1, cy - 34, 9, 13, "#e74643");
+    rect(x + 8, cy - 29, 7, 9, "#e74643");
+
+    rect(x - 14, cy + 23, 7, 10, "#d88b24");
+    rect(x + 7, cy + 23, 7, 10, "#d88b24");
+    rect(x - 19, cy + 31, 14, 5, "#f0a42c");
+    rect(x + 5, cy + 31, 14, 5, "#f0a42c");
+  }
+
+  function drawHUD() {
+    const grad = ctx.createLinearGradient(0, 0, 0, 130);
+    grad.addColorStop(0, "rgba(11,16,24,.78)");
+    grad.addColorStop(1, "rgba(11,16,24,0)");
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, W, 130);
+
+    text("SCORE", 25, 20, 20, "#f6cf45");
+    text(String(score).padStart(3, "0"), 25, 44, 39, "#ffffff");
+    text("BEST", W - 25, 20, 20, "#f6cf45", "right");
+    text(String(bestScore).padStart(3, "0"), W - 25, 44, 39, "#ffffff", "right");
+
+    if (autoMode) {
+      rect(W / 2 - 49, 21, 98, 36, "#15212c");
+      rect(W / 2 - 45, 25, 90, 28, "#35d39a");
+      ctx.font = "bold 20px monospace";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillStyle = "#10251e";
+      ctx.fillText("AUTO", W / 2, 39);
+    } else {
+      rect(W / 2 - 60, 21, 120, 36, "#15212c");
+      rect(W / 2 - 56, 25, 112, 28, "#63aaf2");
+      ctx.font = "bold 18px monospace";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillStyle = "#102030";
+      ctx.fillText("PLAYER", W / 2, 39);
+    }
+
+    if (autoMode && performance.now() < autoReadyAt && state === "playing") {
+      text("AUTO STARTING...", W / 2, 91, 18, "#ffffff", "center");
+    }
+  }
+
+  function drawGameOver() {
+    ctx.fillStyle = "rgba(8,12,18,.56)";
+    ctx.fillRect(0, 0, W, H);
+
+    const x = 90;
+    const y = 315;
+    const w = 540;
+    const h = 285;
+
+    rect(x + 10, y + 12, w, h, "rgba(0,0,0,.35)");
+    rect(x, y, w, h, "#171e29");
+    rect(x + 8, y + 8, w - 16, h - 16, "#263244");
+    rect(x + 18, y + 18, w - 36, 8, "#ef3d55");
+
+    text("GAME OVER", W / 2, y + 45, 48, "#ff5268", "center");
+    text(deathReason, W / 2, y + 112, 23, "#ffffff", "center");
+    text(`SCORE ${score}`, W / 2, y + 157, 30, "#f7d447", "center");
+    text(`BEST  ${bestScore}`, W / 2, y + 197, 24, "#9ce7ff", "center");
+    text("AUTO RESTARTING...", W / 2, y + 245, 17, "#bac7d6", "center");
+  }
+
+  function render() {
+    ctx.clearRect(0, 0, W, H);
+
+    const minRow = Math.floor(cameraRow - 3);
+    const maxRow = Math.ceil(cameraRow + 12);
+    generateTo(Math.max(20, maxRow));
+
+    for (let row = minRow; row <= maxRow; row++) drawLane(getLane(row));
+    for (let row = maxRow; row >= minRow; row--) drawLaneObjects(getLane(row));
+
+    if (state === "playing") drawChicken();
+
+    for (const p of particles) {
+      ctx.globalAlpha = Math.max(0, Math.min(1, p.life * 1.7));
+      rect(p.x - 5, p.y - 5, 10, 10, p.color);
+    }
+    ctx.globalAlpha = 1;
+
+    drawHUD();
+
+    if (state === "over") drawGameOver();
+
+    if (screenFlash > 0) {
+      ctx.fillStyle = `rgba(255,255,255,${screenFlash * 0.28})`;
+      ctx.fillRect(0, 0, W, H);
+    }
+  }
+
+  function frame(now) {
+    const dt = Math.min(0.034, Math.max(0, (now - lastTime) / 1000));
+    lastTime = now;
+    update(dt, now);
+    render();
+    requestAnimationFrame(frame);
+  }
+
+  window.addEventListener("keydown", e => {
+    const map = {
+      ArrowUp: [0, 1, "up"],
+      ArrowDown: [0, -1, "down"],
+      ArrowLeft: [-1, 0, "left"],
+      ArrowRight: [1, 0, "right"]
+    };
+
+    if (!map[e.key]) return;
+    e.preventDefault();
+
+    autoMode = false;
+
+    if (state === "playing") {
+      const [dx, dr, facing] = map[e.key];
+      beginHop(dx, dr, facing);
+    }
+  }, { passive: false });
+
+  let touchStart = null;
+
+  canvas.addEventListener("pointerdown", e => {
+    touchStart = { x: e.clientX, y: e.clientY };
+  });
+
+  canvas.addEventListener("pointerup", e => {
+    if (!touchStart || state !== "playing") return;
+
+    const dx = e.clientX - touchStart.x;
+    const dy = e.clientY - touchStart.y;
+    touchStart = null;
+    autoMode = false;
+
+    if (Math.abs(dx) < 12 && Math.abs(dy) < 12) {
+      beginHop(0, 1, "up");
+    } else if (Math.abs(dx) > Math.abs(dy)) {
+      beginHop(dx < 0 ? -1 : 1, 0, dx < 0 ? "left" : "right");
+    } else {
+      beginHop(0, dy < 0 ? 1 : -1, dy < 0 ? "up" : "down");
+    }
+  });
+
+  resetGame(true);
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
