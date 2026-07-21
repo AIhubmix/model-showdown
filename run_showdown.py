@@ -23,6 +23,7 @@ import sys
 import threading
 import time
 import urllib.request
+from datetime import datetime, timezone
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 GATEWAY = "https://aihubmix.com/v1/chat/completions"
@@ -59,10 +60,42 @@ MODELS = {
     # non-thinking / substitute / guest contestants — NOT in the default lineup,
     # pick explicitly via --models
     "claude-opus-4-8": {"display": "Claude Opus 4.8", "lineup": False},
-    # Fable 5: adaptive reasoning; request a large native thinking budget
-    # (param accepted by the gateway; effectiveness not yet A/B-verified)
-    "claude-fable-5": {"display": "Claude Fable 5", "max_tokens": 100000, "lineup": False,
-                       "params": {"thinking": {"type": "enabled", "budget_tokens": 60000}}},
+    # Fable 5: adaptive reasoning via native /v1/messages (NOT chat/completions).
+    # 128000 is claude-fable-5's hard ceiling on the gateway (verified via
+    # direct curl 400). max_tokens must always be set explicitly — omitting it
+    # does NOT fall back to that ceiling, it silently drops to ~4096, which the
+    # thinking budget blows through instantly (finish_reason=length, empty
+    # content).
+    # endpoint=messages: switched from chat/completions hoping incremental
+    # content_block_delta events would keep the wire hot — this did NOT fix
+    # anything, both endpoints behave identically for this model/gateway, and
+    # neither is worse than the other. Kept endpoint=messages since it's the
+    # architecturally correct protocol.
+    # ROOT CAUSE (confirmed via AIHubMix backend tid export, ep04): for a
+    # real task (ref image + long prompt) the model needs ~12-13min before
+    # its *first* content byte reaches the gateway (all of it is silent
+    # server-side "thinking" — no partial frames, on either endpoint). Some
+    # intermediary (proxy/LB — ours or AIHubMix's) kills idle client
+    # connections at ~10-11min, i.e. 1-2min *before* that first byte would
+    # arrive. This is NOT proportional to budget_tokens — 100k/40k/18k budgets
+    # all died at the same ~10-11min mark, and the real run still used 47k
+    # thinking_tokens despite budget_tokens=18000 (budget_tokens is a soft
+    # hint here, not a hard cap). So lowering the budget doesn't help; the
+    # generation itself still needs the same wall-clock time regardless.
+    # reasoning:{effort:"max",display:"summarized"} was also tried as a
+    # workaround: 400 invalid field on /v1/messages; on /v1/chat/completions
+    # the request never even registered on the AIHubMix dashboard — dead end.
+    # WORKAROUND when this happens: the generation still completes
+    # successfully server-side even though the client connection dies —
+    # ask the user to pull the AIHubMix dashboard record for the request's
+    # tid (shown in error bodies, or found via the dashboard's request log)
+    # and export it; the complete response (incl. the ```html block) can be
+    # recovered from there and written directly to work_<model>/index.html,
+    # no need to re-run generation. See episodes/ep04's recovery for tid
+    # 2026072014131970707025835020540.
+    "claude-fable-5": {"display": "Claude Fable 5", "max_tokens": 128000, "lineup": False,
+                       "endpoint": "messages",
+                       "params": {"thinking": {"type": "enabled", "budget_tokens": 40000}}},
     "coding-kimi-k3": {"display": "Kimi K3", "max_tokens": 100000,
                        "retries": 8, "lineup": False},
     # Qwen3.8 Max Preview：大 HTML 产物给足输出预算；显式 --models 选入
@@ -124,7 +157,175 @@ def to_responses_input(content):
     return [{"role": "user", "content": parts}]
 
 
-def call_model_responses(model, prompt, label):
+def to_messages_content(content):
+    """Convert chat-style user content (text + image_url) into Anthropic
+    Messages API native content blocks (text + image/base64)."""
+    if isinstance(content, str):
+        return content
+    parts = []
+    for p in content:
+        if p["type"] == "text":
+            parts.append({"type": "text", "text": p["text"]})
+        elif p["type"] == "image_url":
+            header, b64 = p["image_url"]["url"].split(",", 1)
+            media_type = header.split(":")[1].split(";")[0]
+            parts.append({"type": "image",
+                          "source": {"type": "base64", "media_type": media_type, "data": b64}})
+    return parts
+
+
+def _iso_now():
+    return datetime.now(timezone.utc).isoformat()
+
+
+class Timeline:
+    """Per-request client-side event timeline (UTC timestamps), written
+    incrementally to ep_dir/timeline_<label>.json. Purpose: when a
+    long-thinking model's connection dies mid-stream, this file lets you
+    line up OUR observed timestamps (first_byte, first_content_delta,
+    connection_dropped) directly against the AIHubMix backend's tid export
+    timestamps for the same request — proving (not just inferring) whether
+    the client disconnected before real content was sent, instead of relying
+    on statistical correlation across separate runs. Survives a mid-stream
+    exception since every mark() flushes immediately."""
+    def __init__(self, ep_dir, label, model, endpoint):
+        self.ep_dir = ep_dir
+        self.label = label
+        self.t0 = time.time()
+        self.data = {
+            "requested": model, "label": label, "endpoint": endpoint,
+            "request_sent_utc": _iso_now(), "events": [], "outcome": None,
+        }
+
+    def mark(self, kind, **extra):
+        self.data["events"].append({
+            "t_rel_s": round(time.time() - self.t0, 2),
+            "utc": _iso_now(),
+            "kind": kind,
+            **extra,
+        })
+        self.flush()
+
+    def finish(self, outcome):
+        self.data["outcome"] = outcome
+        self.flush()
+
+    def flush(self):
+        if not self.ep_dir:
+            return
+        path = os.path.join(self.ep_dir, f"timeline_{self.label}.json")
+        tmp = path + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(self.data, f, ensure_ascii=False, indent=1)
+        os.replace(tmp, path)
+
+
+def call_model_messages(model, prompt, label, ep_dir=None):
+    """Same contract as call_model, but via the native Anthropic /v1/messages
+    protocol (x-api-key auth, content_block_delta events). Needed for
+    claude-fable-5: on /v1/chat/completions its thinking phase transmits as
+    ONE opaque non-incremental marker — the whole thinking duration is a
+    silent wire, which the upstream proxy idle-kills after ~10-15min on long
+    thinking (verified: 3/3 failures at ~10.3min avg with a 100k budget).
+    On /v1/messages, content streams as incremental content_block_delta
+    events once generation starts, keeping the connection hot."""
+    cfg = MODELS.get(model, {})
+    payload = {
+        "model": model,
+        "max_tokens": cfg.get("max_tokens", DEFAULT_MAX_TOKENS),
+        "messages": [{"role": "user", "content": to_messages_content(prompt)}],
+        "stream": True,
+    }
+    payload.update(cfg.get("params", {}))
+    req = urllib.request.Request(
+        GATEWAY.replace("/chat/completions", "/messages"),
+        data=json.dumps(payload).encode(),
+        headers={
+            "Content-Type": "application/json",
+            "x-api-key": API_KEY,
+            "Accept": "text/event-stream",
+        },
+    )
+    content, usage, finish, err = [], {}, None, None
+    chunks = 0
+    t0 = time.time()
+    next_beat = t0 + HEARTBEAT_S
+    conn_dropped = None
+    tl = Timeline(ep_dir, label, model, "messages")
+    first_byte = first_content = False
+    try:
+        with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT_S) as resp:
+            for raw in resp:
+                if not first_byte:
+                    first_byte = True
+                    tl.mark("first_byte")
+                now = time.time()
+                if now >= next_beat:
+                    tl.mark("heartbeat", events=chunks,
+                            content_chars=sum(len(c) for c in content))
+                    print(f"[{label}] streaming(messages)… {chunks} events, "
+                          f"{sum(len(c) for c in content)} content chars, "
+                          f"{now - t0:.0f}s elapsed", flush=True)
+                    next_beat = now + HEARTBEAT_S
+                line = raw.decode("utf-8", "replace").strip()
+                if not line.startswith("data:"):
+                    continue
+                try:
+                    ev = json.loads(line[5:].strip())
+                except ValueError:
+                    continue
+                chunks += 1
+                etype = ev.get("type", "")
+                if etype == "content_block_delta":
+                    delta = ev.get("delta") or {}
+                    if delta.get("type") == "text_delta":
+                        if not first_content:
+                            first_content = True
+                            tl.mark("first_content_delta", events=chunks)
+                        content.append(delta.get("text", ""))
+                elif etype == "message_start":
+                    u = (ev.get("message") or {}).get("usage") or {}
+                    if u:
+                        usage["prompt_tokens"] = u.get("input_tokens", 0)
+                elif etype == "message_delta":
+                    d = ev.get("delta") or {}
+                    if d.get("stop_reason"):
+                        finish = d["stop_reason"]
+                    u = ev.get("usage") or {}
+                    if u.get("output_tokens") is not None:
+                        usage["completion_tokens"] = u["output_tokens"]
+                        usage["total_tokens"] = usage.get("prompt_tokens", 0) + u["output_tokens"]
+                elif etype == "error":
+                    err = (ev.get("error") or {}).get("message", "stream error")
+    except Exception as e:  # noqa: BLE001
+        # See call_model: salvage partial text on a mid-stream connection drop
+        # instead of discarding a possibly-complete generation.
+        conn_dropped = str(e)
+        tl.mark("connection_dropped", events=chunks,
+                content_chars=sum(len(c) for c in content), error=conn_dropped)
+        tl.finish("connection_dropped")
+        print(f"[{label}] connection dropped after {chunks} events, "
+              f"{sum(len(c) for c in content)} content chars: {conn_dropped}", flush=True)
+        if not content:
+            raise
+    if not conn_dropped:
+        tl.mark("stream_end", events=chunks, content_chars=sum(len(c) for c in content))
+        tl.finish("error" if err else "ok")
+    if err:
+        return {"error": {"message": err}}
+    if conn_dropped:
+        finish = finish or "connection_dropped"
+    return {
+        "model": model,
+        "usage": usage,
+        "choices": [{
+            "message": {"role": "assistant", "content": "".join(content)},
+            "finish_reason": finish,
+        }],
+    }
+
+
+def call_model_responses(model, prompt, label, ep_dir=None):
     """Same contract as call_model, but via /v1/responses (needed where
     reasoning effort is only honored on this endpoint)."""
     cfg = MODELS.get(model, {})
@@ -148,42 +349,70 @@ def call_model_responses(model, prompt, label):
     chunks = 0
     t0 = time.time()
     next_beat = t0 + HEARTBEAT_S
-    with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT_S) as resp:
-        for raw in resp:
-            now = time.time()
-            if now >= next_beat:
-                print(f"[{label}] streaming(responses)… {chunks} events, "
-                      f"{sum(len(c) for c in text)} content chars, "
-                      f"{now - t0:.0f}s elapsed", flush=True)
-                next_beat = now + HEARTBEAT_S
-            line = raw.decode("utf-8", "replace").strip()
-            if not line.startswith("data:"):
-                continue
-            try:
-                ev = json.loads(line[5:].strip())
-            except ValueError:
-                continue
-            chunks += 1
-            etype = ev.get("type", "")
-            if etype == "response.output_text.delta":
-                text.append(ev.get("delta") or "")
-            elif etype in ("response.completed", "response.incomplete", "response.failed"):
-                r = ev.get("response") or {}
-                status = r.get("status")
-                u = r.get("usage") or {}
-                usage = {
-                    "prompt_tokens": u.get("input_tokens", 0),
-                    "completion_tokens": u.get("output_tokens", 0),
-                    "total_tokens": u.get("total_tokens", 0),
-                    "completion_tokens_details": u.get("output_tokens_details") or {},
-                }
-                if etype == "response.failed":
-                    err = (r.get("error") or {}).get("message", "response.failed")
-            elif etype == "error":
-                err = ev.get("message", "stream error")
+    conn_dropped = None
+    tl = Timeline(ep_dir, label, model, "responses")
+    first_byte = first_content = False
+    try:
+        with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT_S) as resp:
+            for raw in resp:
+                if not first_byte:
+                    first_byte = True
+                    tl.mark("first_byte")
+                now = time.time()
+                if now >= next_beat:
+                    tl.mark("heartbeat", events=chunks,
+                            content_chars=sum(len(c) for c in text))
+                    print(f"[{label}] streaming(responses)… {chunks} events, "
+                          f"{sum(len(c) for c in text)} content chars, "
+                          f"{now - t0:.0f}s elapsed", flush=True)
+                    next_beat = now + HEARTBEAT_S
+                line = raw.decode("utf-8", "replace").strip()
+                if not line.startswith("data:"):
+                    continue
+                try:
+                    ev = json.loads(line[5:].strip())
+                except ValueError:
+                    continue
+                chunks += 1
+                etype = ev.get("type", "")
+                if etype == "response.output_text.delta":
+                    if not first_content:
+                        first_content = True
+                        tl.mark("first_content_delta", events=chunks)
+                    text.append(ev.get("delta") or "")
+                elif etype in ("response.completed", "response.incomplete", "response.failed"):
+                    r = ev.get("response") or {}
+                    status = r.get("status")
+                    u = r.get("usage") or {}
+                    usage = {
+                        "prompt_tokens": u.get("input_tokens", 0),
+                        "completion_tokens": u.get("output_tokens", 0),
+                        "total_tokens": u.get("total_tokens", 0),
+                        "completion_tokens_details": u.get("output_tokens_details") or {},
+                    }
+                    if etype == "response.failed":
+                        err = (r.get("error") or {}).get("message", "response.failed")
+                elif etype == "error":
+                    err = ev.get("message", "stream error")
+    except Exception as e:  # noqa: BLE001
+        # See call_model: salvage partial text on a mid-stream connection drop
+        # instead of discarding a possibly-complete generation.
+        conn_dropped = str(e)
+        tl.mark("connection_dropped", events=chunks,
+                content_chars=sum(len(c) for c in text), error=conn_dropped)
+        tl.finish("connection_dropped")
+        print(f"[{label}] connection dropped after {chunks} events, "
+              f"{sum(len(c) for c in text)} content chars: {conn_dropped}", flush=True)
+        if not text:
+            raise
+    if not conn_dropped:
+        tl.mark("stream_end", events=chunks, content_chars=sum(len(c) for c in text))
+        tl.finish("error" if err else "ok")
     if err:
         return {"error": {"message": err}}
     finish = {"completed": "stop", "incomplete": "length"}.get(status, status)
+    if conn_dropped and not finish:
+        finish = "connection_dropped"
     return {
         "model": model,
         "usage": usage,
@@ -194,17 +423,22 @@ def call_model_responses(model, prompt, label):
     }
 
 
-def call_model(model, prompt, label):
+def call_model(model, prompt, label, ep_dir=None):
     """Stream the completion (SSE) and reassemble an OpenAI-style response dict."""
-    if MODELS.get(model, {}).get("endpoint") == "responses":
-        return call_model_responses(model, prompt, label)
+    endpoint = MODELS.get(model, {}).get("endpoint")
+    if endpoint == "responses":
+        return call_model_responses(model, prompt, label, ep_dir)
+    if endpoint == "messages":
+        return call_model_messages(model, prompt, label, ep_dir)
     payload = {
         "model": model,
         "messages": [{"role": "user", "content": prompt}],
-        "max_tokens": MODELS.get(model, {}).get("max_tokens", DEFAULT_MAX_TOKENS),
         "stream": True,
         "stream_options": {"include_usage": True},
     }
+    max_tokens = MODELS.get(model, {}).get("max_tokens", DEFAULT_MAX_TOKENS)
+    if max_tokens is not None:  # None = omit entirely, let the gateway pick its own ceiling
+        payload["max_tokens"] = max_tokens
     payload.update(MODELS.get(model, {}).get("params", {}))
     req = urllib.request.Request(
         GATEWAY,
@@ -219,39 +453,70 @@ def call_model(model, prompt, label):
     chunks = 0
     t0 = time.time()
     next_beat = t0 + HEARTBEAT_S
-    with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT_S) as resp:
-        for raw in resp:
-            now = time.time()
-            if now >= next_beat:
-                print(f"[{label}] streaming… {chunks} chunks, "
-                      f"{sum(len(c) for c in content)} content chars, "
-                      f"{now - t0:.0f}s elapsed", flush=True)
-                next_beat = now + HEARTBEAT_S
-            line = raw.decode("utf-8", "replace").strip()
-            if not line.startswith("data:"):
-                continue
-            data = line[5:].strip()
-            if data == "[DONE]":
-                break
-            try:
-                chunk = json.loads(data)
-            except ValueError:
-                continue
-            chunks += 1
-            if "error" in chunk:
-                err = chunk["error"]
-                break
-            model_echo = chunk.get("model") or model_echo
-            if chunk.get("usage"):
-                usage = chunk["usage"]
-            for ch in chunk.get("choices") or []:
-                delta = ch.get("delta") or {}
-                if delta.get("content"):
-                    content.append(delta["content"])
-                if ch.get("finish_reason"):
-                    finish = ch["finish_reason"]
+    conn_dropped = None
+    tl = Timeline(ep_dir, label, model, "chat/completions")
+    first_byte = first_content = False
+    try:
+        with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT_S) as resp:
+            for raw in resp:
+                if not first_byte:
+                    first_byte = True
+                    tl.mark("first_byte")
+                now = time.time()
+                if now >= next_beat:
+                    tl.mark("heartbeat", chunks=chunks,
+                            content_chars=sum(len(c) for c in content))
+                    print(f"[{label}] streaming… {chunks} chunks, "
+                          f"{sum(len(c) for c in content)} content chars, "
+                          f"{now - t0:.0f}s elapsed", flush=True)
+                    next_beat = now + HEARTBEAT_S
+                line = raw.decode("utf-8", "replace").strip()
+                if not line.startswith("data:"):
+                    continue
+                data = line[5:].strip()
+                if data == "[DONE]":
+                    break
+                try:
+                    chunk = json.loads(data)
+                except ValueError:
+                    continue
+                chunks += 1
+                if "error" in chunk:
+                    err = chunk["error"]
+                    break
+                model_echo = chunk.get("model") or model_echo
+                if chunk.get("usage"):
+                    usage = chunk["usage"]
+                for ch in chunk.get("choices") or []:
+                    delta = ch.get("delta") or {}
+                    if delta.get("content"):
+                        if not first_content:
+                            first_content = True
+                            tl.mark("first_content_delta", chunks=chunks)
+                        content.append(delta["content"])
+                    if ch.get("finish_reason"):
+                        finish = ch["finish_reason"]
+    except Exception as e:  # noqa: BLE001
+        # Connection can die mid-stream (upstream idle-kill on a long silent
+        # thinking phase — seen with claude-fable-5). Don't throw away
+        # whatever content already arrived: the model may have finished (or
+        # nearly finished) generating server-side even though the socket
+        # never delivered the tail. Salvage it and let extract_html decide.
+        conn_dropped = str(e)
+        tl.mark("connection_dropped", chunks=chunks,
+                content_chars=sum(len(c) for c in content), error=conn_dropped)
+        tl.finish("connection_dropped")
+        print(f"[{label}] connection dropped after {chunks} chunks, "
+              f"{sum(len(c) for c in content)} content chars: {conn_dropped}", flush=True)
+        if not content:
+            raise
+    if not conn_dropped:
+        tl.mark("stream_end", chunks=chunks, content_chars=sum(len(c) for c in content))
+        tl.finish("error" if err else "ok")
     if err:
         return {"error": err}
+    if conn_dropped:
+        finish = finish or "connection_dropped"
     return {
         "model": model_echo,
         "usage": usage,
@@ -348,7 +613,7 @@ def run_one(requested, prompt, ep_dir, record_seconds, rec_w=None, rec_h=None):
     for attempt in range(1, retries + 1):
         t0 = time.time()
         try:
-            data = call_model(requested, prompt, requested)
+            data = call_model(requested, prompt, requested, ep_dir)
         except Exception as e:  # noqa: BLE001
             last_err = f"attempt {attempt}: {e}"
             print(f"[{requested}] FAIL {last_err}", flush=True)

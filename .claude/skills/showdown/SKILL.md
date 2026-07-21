@@ -107,3 +107,22 @@ fold new pitfalls back into this file.
 - One-shot shader tasks discriminate hard: a single GLSL overload typo
   (`fbm(vec3)` vs `fbm(vec2)`, ep10 Qwen) voids the whole render — unlike JS,
   one compile error = black screen. Good task genre for separating models
+- record.mjs launches Chromium with GPU (`--use-angle=metal`) since ep10 —
+  software rendering made heavy-shader recordings choppy and coarse. Record at
+  1920x1080 for final-cut material; GPU also loads pages faster (first visible
+  frame ~5s vs ~9-10s)
+- Shader-heavy prompts should include a GLSL self-check clause from the start
+  ("every call site must exactly match a defined overload; one compile error =
+  black screen = failure") — adding it got Qwen from black screen to shipping
+  in one retry (ep10 v3)
+- `layout: "fullbleed"` (props) — recordings tiled edge-to-edge over the full
+  frame, floating name/cost pills, brand bar only in the outro. ~3x more
+  content area than the card layouts; best default for cinematic subjects
+- `orbit-record.mjs` re-records an existing artifact while driving its
+  interactive camera (in-page synthetic PointerEvent/WheelEvent via rAF — the
+  Playwright mouse API is ~10x too slow on heavy-shader pages, one protocol
+  roundtrip per move). Wait for the intro cinematic to fully land before
+  injecting (page-time, not recording-time), never run two GPU headless
+  instances in parallel (they crash each other), and equalize subject size by
+  dollying the smaller-subject artifact IN rather than zooming the other out —
+  disk brightness can fall off a cliff with distance (ep10 Qwen invisible at 66 Rs)

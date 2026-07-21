@@ -30,7 +30,8 @@ export type ShowdownProps = {
   playFrames: number;
   outroFrames: number;
   audio?: string; // public/ relative path to an audio bed, e.g. "ep02/audio.wav"
-  layout?: 'horizontal' | 'vertical'; // 面板并排(默认) 或 上下堆叠
+  layout?: 'horizontal' | 'vertical' | 'fullbleed'; // 并排(默认) / 卡片上下堆叠 / 无边框拼接+浮动角标
+  fullbleedDir?: 'row' | 'col'; // fullbleed 专用：横条堆叠(默认，适配横屏内容) / 竖条并排(适配竖屏内容)
 };
 
 const BG = '#0b0e14';
@@ -167,13 +168,75 @@ const Panel: React.FC<{
   );
 };
 
-const Panels: React.FC<ShowdownProps> = ({ models, tagline, layout = 'horizontal' }) => {
+const Panels: React.FC<ShowdownProps> = ({ models, tagline, layout = 'horizontal', fullbleedDir = 'row' }) => {
   const { width, height } = useVideoConfig();
   const s = width / 1080;
   const brandH = tagline ? 110 * s : 0;
   const gap = 24 * s;
   const pad = 32 * s;
   const n = models.length;
+
+  if (layout === 'fullbleed') {
+    // 无边框拼接：画面等分拼满全屏，模型名/费用作为半透明角标浮在画面上，
+    // 不占任何布局空间——录屏内容最大化（ep10 反馈）
+    // fullbleedDir='row': 横条堆叠，适配横屏录屏（宽而扁的容器贴合 16:9 源）
+    // fullbleedDir='col': 竖条并排，适配竖屏录屏（窄而高的容器贴合竖屏源，避免顶部/底部被裁掉）
+    const isCol = fullbleedDir === 'col';
+    const h = isCol ? height : height / n;
+    const w = isCol ? width / n : width;
+    return (
+      <AbsoluteFill style={{ background: '#000' }}>
+        {models.map((m, i) => (
+          <div
+            key={m.name}
+            style={{
+              position: 'absolute',
+              top: isCol ? 0 : i * h,
+              left: isCol ? i * w : 0,
+              width: w,
+              height: h,
+              overflow: 'hidden',
+            }}
+          >
+            <OffthreadVideo
+              src={staticFile(m.video)}
+              muted
+              startFrom={m.startFrom ?? 0}
+              style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+            />
+            {i > 0 ? (
+              <div
+                style={
+                  isCol
+                    ? { position: 'absolute', top: 0, left: 0, bottom: 0, width: 2, background: 'rgba(255,255,255,0.18)' }
+                    : { position: 'absolute', top: 0, left: 0, right: 0, height: 2, background: 'rgba(255,255,255,0.18)' }
+                }
+              />
+            ) : null}
+            <div
+              style={{
+                position: 'absolute',
+                top: 20 * s,
+                left: 24 * s,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 12 * s,
+                padding: `${8 * s}px ${16 * s}px`,
+                borderRadius: 999,
+                background: 'rgba(8,10,16,0.72)',
+                backdropFilter: 'blur(6px)',
+                fontFamily: font,
+              }}
+            >
+              <div style={{ width: 14 * s, height: 14 * s, borderRadius: '50%', background: m.accent }} />
+              <div style={{ color: TEXT, fontSize: 26 * s, fontWeight: 800, whiteSpace: 'nowrap' }}>{m.name}</div>
+              <div style={{ color: MONEY, fontFamily: mono, fontWeight: 700, fontSize: 24 * s }}>{m.cost}</div>
+            </div>
+          </div>
+        ))}
+      </AbsoluteFill>
+    );
+  }
 
   if (layout === 'vertical') {
     // 上下堆叠：每块占满宽度；视频区按 16:9 精确排布，横屏游戏画面完整不裁，整体竖向居中
@@ -362,7 +425,15 @@ export const Showdown: React.FC<ShowdownProps> = (props) => {
       <Sequence from={introFrames + playFrames} durationInFrames={outroFrames}>
         <Scoreboard {...props} />
       </Sequence>
-      {props.tagline ? <BrandBar tagline={props.tagline} /> : null}
+      {props.tagline && props.layout !== 'fullbleed' ? (
+        <BrandBar tagline={props.tagline} />
+      ) : null}
+      {props.tagline && props.layout === 'fullbleed' ? (
+        // fullbleed：播放期不遮挡画面，品牌条只在片尾账单页出现
+        <Sequence from={introFrames + playFrames} durationInFrames={outroFrames}>
+          <BrandBar tagline={props.tagline} />
+        </Sequence>
+      ) : null}
     </AbsoluteFill>
   );
 };
