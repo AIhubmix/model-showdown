@@ -1,5 +1,7 @@
 # model-showdown
 
+**🏟️ Live gallery: [aihubmix.github.io/model-showdown](https://aihubmix.github.io/model-showdown/)**
+
 Turn "same prompt, N models, one shot" benchmarks into publish-ready comparison
 videos — automatically.
 
