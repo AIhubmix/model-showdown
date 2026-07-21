@@ -1,0 +1,544 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"/>
+<title>GARGANTUA</title>
+<style>
+  html,body{margin:0;padding:0;height:100%;background:#000;overflow:hidden}
+  body{cursor:grab}
+  body:active{cursor:grabbing}
+  canvas{display:block}
+  #hud{
+    position:fixed;right:24px;bottom:20px;z-index:5;pointer-events:none;user-select:none;
+    color:rgba(255,255,255,.72);text-align:right;text-transform:uppercase;
+    font:300 11px/1.9 "Helvetica Neue",Helvetica,Arial,sans-serif;letter-spacing:.24em;
+    text-shadow:0 0 8px rgba(0,0,0,.9);
+  }
+  #hud .v{color:#fff;font-weight:400;letter-spacing:.14em}
+  #sub{
+    position:fixed;left:0;right:0;bottom:7.5%;z-index:5;pointer-events:none;user-select:none;
+    text-align:center;color:rgba(255,255,255,.94);
+    font:300 clamp(13px,1.5vw,20px)/1.5 "Helvetica Neue",Helvetica,Arial,sans-serif;
+    letter-spacing:.16em;text-shadow:0 1px 10px rgba(0,0,0,.95);
+    opacity:0;transition:opacity 1.5s ease;
+  }
+  #hint{
+    position:fixed;left:24px;top:20px;z-index:5;pointer-events:none;user-select:none;
+    color:rgba(255,255,255,.38);font:300 10px/1.6 "Helvetica Neue",Helvetica,Arial,sans-serif;
+    letter-spacing:.3em;text-transform:uppercase;transition:opacity 2s ease;
+  }
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.166.1/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.166.1/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+<div id="hud">
+  DIST&nbsp;—&nbsp;EVENT&nbsp;HORIZON&nbsp;&nbsp;<span class="v" id="dist">—</span><br/>
+  TIME&nbsp;DILATION&nbsp;&nbsp;<span class="v" id="td">—</span>
+</div>
+<div id="sub">Ten million suns fall forever — and the dark gives nothing back.</div>
+<div id="hint">Drag&nbsp;·&nbsp;Orbit&nbsp;&nbsp;&nbsp;Scroll&nbsp;·&nbsp;Dolly&nbsp;&nbsp;&nbsp;R&nbsp;·&nbsp;Cinematic</div>
+
+<script type="module">
+import * as THREE from 'three';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+
+/* ============================================================
+   RENDERER
+============================================================ */
+const renderer = new THREE.WebGLRenderer({ antialias:false, powerPreference:'high-performance', stencil:false });
+let pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+renderer.setPixelRatio(pixelRatio);
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.toneMapping = THREE.NoToneMapping;
+renderer.autoClear = true;
+document.body.appendChild(renderer.domElement);
+
+/* ============================================================
+   FULLSCREEN SCENE (ray-marched black hole)
+============================================================ */
+const scene  = new THREE.Scene();
+const quadCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+
+const vertexShader = /* glsl */`
+  varying vec2 vUv;
+  void main(){
+    vUv = uv;
+    gl_Position = vec4(position.xy, 0.0, 1.0);
+  }
+`;
+
+const fragmentShader = /* glsl */`
+  varying vec2 vUv;
+  uniform vec2  uRes;
+  uniform float uTime;
+  uniform vec3  uCamPos;
+  uniform mat3  uCamMat;
+  uniform float uTanFov;
+  uniform vec4  uPlanet;    // xyz = center, w = radius
+  uniform vec4  uStretch;   // xyz = tidal axis, w = amount
+
+  #define STEPS    260
+  #define DISK_IN  3.0
+  #define DISK_OUT 11.0
+
+  /* ---------- hashes & noise ---------- */
+  float hash13(vec3 p){
+    p = fract(p*0.1031);
+    p += dot(p, p.zyx + 31.32);
+    return fract((p.x + p.y)*p.z);
+  }
+  vec3 hash33(vec3 p){
+    p = fract(p*vec3(0.1031, 0.1030, 0.0973));
+    p += dot(p, p.yxz + 33.33);
+    return fract((p.xxy + p.yxx)*p.zyx);
+  }
+  float noise3(vec3 x){
+    vec3 i = floor(x), f = fract(x);
+    f = f*f*(3.0 - 2.0*f);
+    return mix(
+      mix(mix(hash13(i+vec3(0.,0.,0.)), hash13(i+vec3(1.,0.,0.)), f.x),
+          mix(hash13(i+vec3(0.,1.,0.)), hash13(i+vec3(1.,1.,0.)), f.x), f.y),
+      mix(mix(hash13(i+vec3(0.,0.,1.)), hash13(i+vec3(1.,0.,1.)), f.x),
+          mix(hash13(i+vec3(0.,1.,1.)), hash13(i+vec3(1.,1.,1.)), f.x), f.y),
+      f.z);
+  }
+  float fbm(vec3 p){
+    float s = 0.0, a = 0.5;
+    for(int k=0;k<4;k++){
+      s += a*noise3(p);
+      p = p*2.13 + vec3(1.7, 9.2, 4.1);
+      a *= 0.5;
+    }
+    return s*1.0667;
+  }
+
+  /* ---------- background stars ---------- */
+  vec3 starLayer(vec3 d, float freq, float thr, float gain){
+    vec3 p  = d*freq;
+    vec3 id = floor(p);
+    vec3 f  = fract(p);
+    float h = hash13(id);
+    if(h < thr) return vec3(0.0);
+    vec3 sp = hash33(id)*0.72 + 0.14;
+    vec3 df = f - sp;
+    float dd2 = dot(df, df);
+    float mag = pow(hash13(id + 19.19), 12.0);
+    float b = (0.10 + 3.2*mag) * exp(-dd2*170.0);
+    vec3 tint = mix(vec3(0.70,0.82,1.20), vec3(1.20,0.85,0.60), hash13(id + 4.44));
+    return tint * b * gain;
+  }
+  vec3 background(vec3 d){
+    vec3 col = vec3(0.0038, 0.0050, 0.0105);
+    col *= 0.70 + 0.60*(1.0 - abs(d.y));
+    col += starLayer(d,       30.0, 0.9960, 1.00);
+    col += starLayer(d + 3.7, 78.0, 0.9972, 0.55);
+    return col;
+  }
+
+  /* ---------- accretion disk ---------- */
+  vec3 diskEmission(vec3 pc, vec3 v){
+    float r   = length(pc.xz);
+    float rad = (r - DISK_IN)/(DISK_OUT - DISK_IN);
+    float a   = atan(pc.z, pc.x);
+
+    /* Keplerian differential rotation (inner faster) */
+    float w  = 2.2 * pow(r, -1.5);
+    float ar = a + uTime*w;
+    float ca = cos(ar), sa = sin(ar);
+
+    /* seamless filament noise (polar-friendly coords, radially compressed) */
+    vec3 np = vec3(ca*r*1.15, sa*r*1.15, r*3.2 - uTime*0.25);
+    float n  = fbm(np);
+    float n2 = fbm(np*3.1 + vec3(7.7, 2.9, 5.3));
+    float streak = smoothstep(0.28, 0.95, n*(0.65 + 0.55*n2));
+
+    float profile = pow(max(1.0 - rad, 0.0), 3.0);
+    float I = 0.10 + 4.2*profile;
+    /* inner edge stays a continuous burning band; filaments bloom outward */
+    I *= mix(0.85, 0.35 + 1.35*streak, smoothstep(0.02, 0.12, rad));
+    I *= smoothstep(0.0, 0.025, rad);
+    I *= 1.0 - smoothstep(0.80, 1.0, rad);
+
+    /* Doppler beaming */
+    vec3 tanV = normalize(vec3(pc.z, 0.0, -pc.x));
+    float dv = dot(tanV, normalize(uCamPos - pc));
+    float g  = clamp(1.0/(1.0 - 0.38*dv), 0.70, 1.60);
+    I *= pow(g, 2.5) * 0.72;
+
+    /* warm palette: white-hot -> orange -> dark red */
+    vec3 cInner = vec3(1.25, 1.16, 1.02);
+    vec3 cMid   = vec3(1.10, 0.52, 0.16);
+    vec3 cOuter = vec3(0.42, 0.11, 0.040);
+    vec3 base = (rad < 0.30)
+      ? mix(cInner, cMid, rad/0.30)
+      : mix(cMid, cOuter, (rad - 0.30)/0.70);
+    base *= mix(vec3(1.12,0.82,0.60), vec3(0.78,0.90,1.28), smoothstep(0.85, 1.50, g));
+
+    /* edge-on column boost */
+    float wgt = 0.55 + 0.85/(1.0 + 7.0*abs(v.y));
+    return base * I * wgt;
+  }
+
+  /* ---------- planet (Miller's world) ---------- */
+  float planetIntersect(vec3 ro, vec3 rd, out vec3 nrm){
+    vec3 C = uPlanet.xyz;
+    float R = uPlanet.w;
+    vec3 e = uStretch.xyz;
+    float k = uStretch.w;
+    vec3 oc = ro - C;
+    vec3 o2 = oc - e*dot(oc, e)*k;
+    vec3 d2 = rd - e*dot(rd, e)*k;
+    float A = dot(d2,d2), B = dot(o2,d2), Cc = dot(o2,o2) - R*R;
+    float disc = B*B - A*Cc;
+    if(disc < 0.0) { nrm = vec3(0.0); return -1.0; }
+    float t = (-B - sqrt(disc))/A;
+    if(t < 0.0) { nrm = vec3(0.0); return -1.0; }
+    vec3 hp = o2 + d2*t;
+    nrm = normalize(hp - e*dot(hp, e)*k);
+    return t;
+  }
+
+  /* ---------- main ---------- */
+  void main(){
+    vec2 uv = (2.0*gl_FragCoord.xy - uRes)/uRes.y;
+    vec3 ro = uCamPos;
+    vec3 rd = normalize(uCamMat * vec3(uv*uTanFov, -1.0));
+
+    vec3 col = vec3(0.0);
+
+    /* --- geodesic ray march (Schwarzschild, rs = 1) --- */
+    vec3 p = ro;
+    vec3 v = rd;
+    vec3 hv = cross(p, v);
+    float h2 = dot(hv, hv);
+    float minR = 1e9;
+    float pathLen = 0.0;
+    bool captured = false;
+    float esc = max(130.0, length(ro)*1.8);
+
+    for(int i=0;i<STEPS;i++){
+      float r2 = dot(p,p);
+      float r  = sqrt(r2);
+      minR = min(minR, r);
+      if(r < 1.02){ captured = true; break; }          /* event horizon: pure black */
+      if(r > esc && dot(p,v) > 0.0) break;
+
+      float dt = clamp(0.30*(r - 1.0), 0.02, 2.5);
+      dt = min(dt, 0.06 + 0.7*abs(p.y));               /* refine near disk plane */
+
+      float r5 = r2*r2*r;
+      v += p * (-1.5*h2/r5) * dt;                      /* light bending */
+      vec3 pn = p + v*dt;
+
+      if(p.y*pn.y < 0.0){                              /* disk plane crossing */
+        float ft = p.y/(p.y - pn.y);
+        vec3 pcx = mix(p, pn, ft);
+        float pr = length(pcx.xz);
+        if(pr > DISK_IN && pr < DISK_OUT){
+          col += diskEmission(pcx, v);
+        }
+      }
+      p = pn;
+      pathLen += dt;
+    }
+
+    if(!captured){
+      /* thin photon ring hugging the shadow */
+      float ring = smoothstep(1.80, 1.52, minR);
+      col += vec3(1.18, 1.08, 0.96) * ring * 1.9;
+      /* faint warm halo of scattered light */
+      float halo = 0.22/(pow(minR, 3.0) - 3.1);
+      col += vec3(1.0, 0.72, 0.45) * clamp(halo, 0.0, 0.5);
+      /* lensed starfield */
+      col += background(v);
+    }
+
+    /* --- planet silhouette (occludes whatever is behind it) --- */
+    vec3 pnrm;
+    float tP = planetIntersect(ro, rd, pnrm);
+    if(tP > 0.0 && tP < pathLen*0.92 + 0.5){
+      vec3 ld = normalize(-uPlanet.xyz);
+      float li = pow(max(dot(pnrm, ld), 0.0), 1.6);
+      vec3 pcol = vec3(1.0, 0.72, 0.45) * li * 0.22;
+      float rim = pow(1.0 - abs(dot(pnrm, rd)), 4.0);
+      pcol += vec3(0.55, 0.70, 1.0) * rim * 0.035;
+      col = pcol + col*0.02;
+    }
+
+    gl_FragColor = vec4(col, 1.0);
+  }
+`;
+
+const uniforms = {
+  uRes:     { value: new THREE.Vector2(1,1) },
+  uTime:    { value: 0 },
+  uCamPos:  { value: new THREE.Vector3() },
+  uCamMat:  { value: new THREE.Matrix3() },
+  uTanFov:  { value: Math.tan(THREE.MathUtils.degToRad(40*0.5)) },
+  uPlanet:  { value: new THREE.Vector4(0,0,0,0.4) },
+  uStretch: { value: new THREE.Vector4(0,1,0,0) }
+};
+
+const quad = new THREE.Mesh(
+  new THREE.PlaneGeometry(2,2),
+  new THREE.ShaderMaterial({
+    uniforms, vertexShader, fragmentShader,
+    depthTest:false, depthWrite:false
+  })
+);
+quad.frustumCulled = false;
+scene.add(quad);
+
+/* ============================================================
+   POST: bloom (tight) + ACES / vignette / grain
+============================================================ */
+const composer = new EffectComposer(renderer);
+composer.setPixelRatio(pixelRatio);
+composer.setSize(window.innerWidth, window.innerHeight);
+
+composer.addPass(new RenderPass(scene, quadCam));
+
+const bloom = new UnrealBloomPass(
+  new THREE.Vector2(window.innerWidth, window.innerHeight),
+  0.55,   /* strength — thin halo only */
+  0.28,   /* radius — tight */
+  1.00    /* threshold — only overexposed inner edge blooms */
+);
+composer.addPass(bloom);
+
+const FinalShader = {
+  uniforms: {
+    tDiffuse: { value: null },
+    uRes:     { value: new THREE.Vector2(1,1) },
+    uTime:    { value: 0 }
+  },
+  vertexShader,
+  fragmentShader: /* glsl */`
+    varying vec2 vUv;
+    uniform sampler2D tDiffuse;
+    uniform vec2  uRes;
+    uniform float uTime;
+
+    vec3 ACESFilm(vec3 x){
+      return clamp((x*(2.51*x + 0.03))/(x*(2.43*x + 0.59) + 0.14), 0.0, 1.0);
+    }
+    void main(){
+      vec3 c = texture2D(tDiffuse, vUv).rgb;
+
+      /* subtle vignette */
+      vec2 q = vUv*2.0 - 1.0;
+      q.x *= uRes.x/uRes.y;
+      c *= 1.0 - 0.30*pow(length(q)*0.60, 2.6);
+
+      c = ACESFilm(c * 1.05);
+
+      /* fine film grain / dither */
+      float g = fract(sin(dot(gl_FragCoord.xy + mod(uTime,10.0)*723.0,
+                              vec2(12.9898, 78.233)))*43758.5453);
+      c += (g - 0.5)*0.010;
+
+      gl_FragColor = vec4(c, 1.0);
+    }
+  `
+};
+const finalPass = new ShaderPass(FinalShader);
+finalPass.renderToScreen = true;
+composer.addPass(finalPass);
+
+/* ============================================================
+   CAMERA / CINEMATIC / INTERACTION
+============================================================ */
+const PHI_END   = 2.6;
+const THETA_END = 1.396;      /* ~80° from pole — near edge-on tilt */
+const R_END     = 74.4;       /* shadow diameter ≈ 10% of frame height @ fov 40 */
+const CINE_TIME = 10.0;
+
+const CINE = {
+  r0: 165.0, r1: R_END,
+  t0: 0.50,  t1: THETA_END,
+  p0: PHI_END - 1.15, p1: PHI_END
+};
+
+const view   = { r: CINE.r0, theta: CINE.t0, phi: CINE.p0 };
+const target = { r: CINE.r0, theta: CINE.t0, phi: CINE.p0 };
+
+let mode  = 'cine';
+let cineT = 0;
+
+const subEl  = document.getElementById('sub');
+const hintEl = document.getElementById('hint');
+const distEl = document.getElementById('dist');
+const tdEl   = document.getElementById('td');
+
+function easeInOutCubic(x){
+  return x < 0.5 ? 4.0*x*x*x : 1.0 - Math.pow(-2.0*x + 2.0, 3.0)*0.5;
+}
+function syncTarget(){ target.r = view.r; target.theta = view.theta; target.phi = view.phi; }
+function endCine(){ if(mode !== 'cine') return; mode = 'manual'; syncTarget(); subEl.style.opacity = 0; hintEl.style.opacity = 0; }
+function startCine(){ mode = 'cine'; cineT = 0; }
+
+/* drag orbit + wheel dolly + pinch */
+const pointers = new Map();
+let pinchDist = 0;
+
+renderer.domElement.addEventListener('pointerdown', (e)=>{
+  endCine();
+  renderer.domElement.setPointerCapture(e.pointerId);
+  pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if(pointers.size === 2){
+    const pts = [...pointers.values()];
+    pinchDist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+  }
+});
+renderer.domElement.addEventListener('pointermove', (e)=>{
+  if(!pointers.has(e.pointerId)) return;
+  const prev = pointers.get(e.pointerId);
+  const dx = e.clientX - prev.x, dy = e.clientY - prev.y;
+  pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+  if(pointers.size === 1){
+    target.phi   -= dx*0.0042;
+    target.theta -= dy*0.0042;
+    target.theta = Math.max(0.05, Math.min(Math.PI - 0.05, target.theta));
+  } else if(pointers.size === 2){
+    const pts = [...pointers.values()];
+    const d = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+    if(pinchDist > 0){
+      target.r = THREE.MathUtils.clamp(target.r * (pinchDist / d), 6, 320);
+    }
+    pinchDist = d;
+  }
+});
+function releasePointer(e){
+  pointers.delete(e.pointerId);
+  if(pointers.size < 2) pinchDist = 0;
+}
+renderer.domElement.addEventListener('pointerup', releasePointer);
+renderer.domElement.addEventListener('pointercancel', releasePointer);
+
+renderer.domElement.addEventListener('wheel', (e)=>{
+  e.preventDefault();
+  endCine();
+  target.r = THREE.MathUtils.clamp(target.r * Math.exp(e.deltaY*0.0011), 6, 320);
+}, { passive:false });
+
+window.addEventListener('keydown', (e)=>{
+  if(e.key === 'r' || e.key === 'R') startCine();
+});
+
+/* resize */
+const bufSize = new THREE.Vector2();
+function onResize(){
+  renderer.setPixelRatio(pixelRatio);
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  composer.setPixelRatio(pixelRatio);
+  composer.setSize(window.innerWidth, window.innerHeight);
+  renderer.getDrawingBufferSize(bufSize);
+  uniforms.uRes.value.copy(bufSize);
+  finalPass.uniforms.uRes.value.copy(bufSize);
+}
+window.addEventListener('resize', onResize);
+onResize();
+
+/* ============================================================
+   FRAME LOOP
+============================================================ */
+const clock = new THREE.Clock();
+let elapsed = 0;
+let frameCount = 0, fpsAccum = 0;
+
+const camPos = new THREE.Vector3();
+const fwd = new THREE.Vector3(), right = new THREE.Vector3();
+const upW = new THREE.Vector3(0,1,0), up2 = new THREE.Vector3();
+const basis4 = new THREE.Matrix4();
+
+const PLANET_ORBIT = 34.0;
+const PLANET_ANG0  = PHI_END + 0.1;   /* lands left of the hole at t = 10 s */
+
+setTimeout(()=>{ hintEl.style.opacity = 0; }, 11000);
+
+function animate(){
+  requestAnimationFrame(animate);
+  const dt = Math.min(clock.getDelta(), 0.05);
+  elapsed += dt;
+
+  /* --- camera state --- */
+  if(mode === 'cine'){
+    cineT += dt;
+    const k = easeInOutCubic(Math.min(cineT / CINE_TIME, 1.0));
+    view.r     = THREE.MathUtils.lerp(CINE.r0, CINE.r1, k);
+    view.theta = THREE.MathUtils.lerp(CINE.t0, CINE.t1, k);
+    view.phi   = THREE.MathUtils.lerp(CINE.p0, CINE.p1, k);
+    syncTarget();
+    subEl.style.opacity = (cineT > 1.2 && cineT < 8.8) ? 1 : 0;
+  } else {
+    const s = 1.0 - Math.exp(-dt*7.0);
+    view.r     += (target.r     - view.r)    * s;
+    view.theta += (target.theta - view.theta)* s;
+    view.phi   += (target.phi   - view.phi)  * s;
+  }
+
+  const st = Math.sin(view.theta), ct = Math.cos(view.theta);
+  camPos.set(
+    view.r * st * Math.cos(view.phi),
+    view.r * ct,
+    view.r * st * Math.sin(view.phi)
+  );
+
+  fwd.copy(camPos).negate().normalize();
+  right.crossVectors(fwd, upW).normalize();
+  up2.crossVectors(right, fwd).normalize();
+  basis4.makeBasis(right, up2, fwd.clone().negate());
+  uniforms.uCamMat.value.setFromMatrix4(basis4);
+  uniforms.uCamPos.value.copy(camPos);
+  uniforms.uTime.value = elapsed;
+
+  /* --- planet --- */
+  const pang = PLANET_ANG0 + elapsed*0.05;
+  uniforms.uPlanet.value.set(
+    PLANET_ORBIT*Math.cos(pang), 2.6, PLANET_ORBIT*Math.sin(pang), 0.4
+  );
+  const pr = uniforms.uPlanet.value.length();
+  const sAmt = Math.min(0.30, 1800.0/(pr*pr*pr));
+  uniforms.uStretch.value.set(
+    uniforms.uPlanet.value.x/pr,
+    uniforms.uPlanet.value.y/pr,
+    uniforms.uPlanet.value.z/pr,
+    sAmt
+  );
+
+  /* --- HUD --- */
+  if((frameCount & 7) === 0){
+    distEl.textContent = (view.r - 1.0).toFixed(1) + ' Rₛ';
+    tdEl.textContent   = '×' + (1.0/Math.sqrt(1.0 - 1.0/view.r)).toFixed(4);
+  }
+
+  /* --- adaptive quality (keep 60 fps, stay sharp) --- */
+  fpsAccum += dt; frameCount++;
+  if(frameCount >= 120){
+    const avg = fpsAccum / frameCount;
+    if(avg > 1/45 && pixelRatio > 1.25){
+      pixelRatio = Math.max(1.25, pixelRatio - 0.25);
+      onResize();
+    }
+    frameCount = 0; fpsAccum = 0;
+  }
+
+  finalPass.uniforms.uTime.value = elapsed;
+  composer.render();
+}
+animate();
+</script>
+</body>
+</html>

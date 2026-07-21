@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Model Arena — Blind Round (prototype)</title>
+<style>
+  :root {
+    --bg: #0b0e14; --card: #151a24; --text: #f2f5fa; --muted: #8b95a7;
+    --money: #22c55e; --line: rgba(255,255,255,0.08);
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    padding: 48px 24px 80px;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; }
+  .kicker { color: var(--muted); font-family: "SF Mono", Menlo, monospace; letter-spacing: 3px; font-size: 13px; }
+  h1 { font-size: 40px; font-weight: 800; margin: 12px 0 8px; }
+  .sub { color: var(--muted); font-size: 17px; max-width: 680px; line-height: 1.55; }
+  h2 { font-size: 26px; font-weight: 800; margin: 44px 0 4px; }
+  .task { color: var(--muted); font-size: 14.5px; margin-bottom: 8px; max-width: 680px; line-height: 1.5; }
+
+  .tally {
+    display: inline-flex; align-items: center; gap: 10px; margin: 18px 0 22px;
+    background: var(--card); border: 1px solid var(--line); border-radius: 999px;
+    padding: 8px 18px; font-family: "SF Mono", Menlo, monospace; font-size: 14px; color: var(--muted);
+  }
+  .tally b { color: var(--text); }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 16px; margin-top: 6px; }
+
+  .mystery-card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 16px;
+    overflow: hidden; transition: border-color .12s ease;
+  }
+  .mystery-card.revealed { border-color: rgba(255,255,255,0.22); }
+
+  .poster-wrap { position: relative; aspect-ratio: 16/9; overflow: hidden; background: #000; }
+  .poster-wrap img { width: 100%; height: 100%; object-fit: cover; display: block; filter: blur(0px); transition: filter .25s ease; }
+  .mystery-card:not(.revealed) .poster-wrap img { filter: brightness(0.85); }
+  .contestant-tag {
+    position: absolute; top: 10px; left: 10px; background: rgba(8,10,16,0.72);
+    border: 1px solid var(--line); border-radius: 8px; padding: 3px 10px;
+    font-family: "SF Mono", Menlo, monospace; font-size: 12px; letter-spacing: 1px; color: var(--muted);
+  }
+  .preview-btn {
+    position: absolute; bottom: 10px; right: 10px; background: rgba(8,10,16,0.78);
+    border: 1px solid rgba(255,255,255,0.25); color: var(--text); border-radius: 999px;
+    padding: 6px 14px; font-size: 12.5px; font-weight: 700; cursor: pointer;
+    transition: background .12s ease, border-color .12s ease;
+  }
+  .preview-btn:hover { background: rgba(255,255,255,0.12); border-color: rgba(255,255,255,0.4); }
+  .poster-wrap iframe { width: 100%; height: 100%; border: 0; display: block; background: #000; }
+
+  .card-body { padding: 16px; }
+
+  .guess-row { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 4px; }
+  .guess-btn {
+    background: rgba(255,255,255,0.04); border: 1px solid var(--line); color: var(--text);
+    border-radius: 8px; padding: 8px 6px; font-size: 12.5px; cursor: pointer;
+    transition: background .12s ease, border-color .12s ease;
+  }
+  .guess-btn:hover { background: rgba(255,255,255,0.09); border-color: rgba(255,255,255,0.22); }
+
+  .model { font-weight: 800; font-size: 17px; display: flex; align-items: center; gap: 8px; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+  .meta { margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap; font-family: "SF Mono", Menlo, monospace; font-size: 13px; }
+  .badge { border: 1px solid rgba(34,197,94,0.4); background: rgba(34,197,94,0.12); color: var(--money);
+           padding: 2px 8px; border-radius: 7px; font-weight: 700; }
+  .time { color: var(--muted); padding: 2px 0; }
+  .note { margin-top: 10px; color: var(--muted); font-size: 13.5px; line-height: 1.45; }
+
+  .verdict { margin-top: 12px; font-size: 13px; font-weight: 700; padding: 6px 10px; border-radius: 8px; display: inline-block; }
+  .verdict.correct { color: var(--money); background: rgba(34,197,94,0.12); border: 1px solid rgba(34,197,94,0.4); }
+  .verdict.wrong { color: #fb923c; background: rgba(251,146,60,0.12); border: 1px solid rgba(251,146,60,0.4); }
+  .open-full { display: block; margin-top: 12px; font-size: 13px; font-weight: 700; color: #7dd3fc; text-decoration: none; }
+  .open-full:hover { text-decoration: underline; }
+
+  footer { margin-top: 60px; color: var(--muted); font-size: 13px; border-top: 1px solid var(--line); padding-top: 20px; line-height: 1.6; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <a href="index.html" style="color:#7dd3fc;font-size:13px;text-decoration:none;font-weight:700;">← Back to The Model Arena</a>
+  <div class="kicker" style="margin-top:14px;">PROTOTYPE · NOT WIRED TO THE REAL SITE</div>
+  <h1>Blind Round · Guess the Model</h1>
+  <p class="sub">Same prompt, one shot each, thinking modes on where available — but this time the model
+  names are hidden. Look at the render, take your best guess, then see who actually made it.</p>
+
+  <h2>Round 6 · Gargantua Redux</h2>
+  <p class="task">Render <em>Interstellar</em>'s black hole in a single self-contained HTML file — ray-marched
+  shader, procedural accretion disk, twin lensed rings, exposure discipline enforced as a hard constraint
+  after an earlier attempt burned the whole frame white.</p>
+
+  <div class="tally" id="tally">
+    <span>👁 <b id="tally-revealed">0</b>/4 revealed</span>
+    <span>·</span>
+    <span>✓ <b id="tally-correct">0</b> correct</span>
+  </div>
+
+  <div class="grid" id="grid"></div>
+
+  <footer>
+    Visual prototype only — costs/times below are placeholders, not the real ep11 numbers. Posters are the
+    actual renders from that run.
+  </footer>
+</div>
+
+<script>
+  const CANDIDATES = ["Claude Fable 5", "GPT-5.6 Sol", "Kimi K3", "Qwen3.8 Max"];
+  const ACCENTS = { "Claude Fable 5": "#f97316", "GPT-5.6 Sol": "#a78bfa", "Kimi K3": "#38bdf8", "Qwen3.8 Max": "#22c55e" };
+
+  const CARDS = [
+    {
+      id: "a", poster: "media/proto/poster-a.png", game: "games/proto/proto-a.html", answer: "Claude Fable 5",
+      cost: "$0.91", time: "~4 min",
+      note: "First try, no compile errors. Clean tone mapping keeps the disk's inner edge burning white while the shadow stays pure black."
+    },
+    {
+      id: "b", poster: "media/proto/poster-b.png", game: "games/proto/proto-b.html", answer: "GPT-5.6 Sol",
+      cost: "$1.28", time: "~14 min",
+      note: "Heaviest reasoning spend of the round. Dense filament detail on the accretion disk."
+    },
+    {
+      id: "c", poster: "media/proto/poster-c.png", game: "games/proto/proto-c.html", answer: "Kimi K3",
+      cost: "$0.50", time: "~18 min",
+      note: "Cheapest of the four. Simpler lensing rings but a solid, legible render."
+    },
+    {
+      id: "d", poster: "media/proto/poster-d.png", game: "games/proto/proto-d.html", answer: "Qwen3.8 Max",
+      cost: "~$0.18", time: "~35 min",
+      note: "The prompt's exposure-discipline clause exists because of a run exactly like this one — the whole frame blew out white."
+    },
+  ];
+
+  const grid = document.getElementById("grid");
+  const state = {};
+
+  CARDS.forEach((c, i) => {
+    state[c.id] = { revealed: false, correct: null };
+    const card = document.createElement("div");
+    card.className = "mystery-card";
+    card.id = "card-" + c.id;
+    card.innerHTML = `
+      <div class="poster-wrap" id="poster-${c.id}">
+        <img src="${c.poster}" alt="mystery render">
+        <div class="contestant-tag">CONTESTANT ${c.id.toUpperCase()}</div>
+        <button class="preview-btn" data-preview="${c.id}">▶ Preview</button>
+      </div>
+      <div class="card-body">
+        <div class="guess-zone">
+          <div class="guess-row">
+            ${CANDIDATES.map(name => `<button class="guess-btn" data-card="${c.id}" data-guess="${name}">${name}</button>`).join("")}
+          </div>
+        </div>
+      </div>
+    `;
+    grid.appendChild(card);
+  });
+
+  grid.addEventListener("click", (e) => {
+    const previewBtn = e.target.closest(".preview-btn");
+    if (previewBtn) {
+      const cardId = previewBtn.dataset.preview;
+      const c = CARDS.find(x => x.id === cardId);
+      const posterWrap = document.getElementById("poster-" + cardId);
+      const iframe = document.createElement("iframe");
+      iframe.src = c.game;
+      iframe.sandbox = "allow-scripts allow-pointer-lock";
+      posterWrap.querySelector("img").replaceWith(iframe);
+      previewBtn.remove();
+      return;
+    }
+
+    const btn = e.target.closest(".guess-btn");
+    if (!btn) return;
+    const cardId = btn.dataset.card;
+    if (state[cardId].revealed) return;
+    const guess = btn.dataset.guess;
+    const c = CARDS.find(x => x.id === cardId);
+    const correct = guess === c.answer;
+    state[cardId] = { revealed: true, correct };
+
+    const cardEl = document.getElementById("card-" + cardId);
+    cardEl.classList.add("revealed");
+    cardEl.querySelector(".contestant-tag").textContent = c.answer.toUpperCase();
+    cardEl.querySelector(".card-body").innerHTML = `
+      <div class="model"><span class="dot" style="background:${ACCENTS[c.answer]}"></span>${c.answer}</div>
+      <div class="meta"><span class="badge">${c.cost}</span><span class="time">${c.time}</span></div>
+      <div class="note">${c.note}</div>
+      <div class="verdict ${correct ? "correct" : "wrong"}">${correct ? "✓ Correct!" : `✗ Wrong — it was actually ${c.answer}`}</div>
+      <a class="open-full" href="${c.game}" target="_blank" rel="noopener">Open full / view source ↗</a>
+    `;
+    updateTally();
+  });
+
+  function updateTally() {
+    const revealed = Object.values(state).filter(s => s.revealed);
+    const correct = revealed.filter(s => s.correct).length;
+    document.getElementById("tally-revealed").textContent = revealed.length;
+    document.getElementById("tally-correct").textContent = correct;
+  }
+</script>
+</body>
+</html>

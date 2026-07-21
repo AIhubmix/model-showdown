@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>The Model Arena — one prompt, one shot, real costs</title>
 <meta name="description" content="Same prompt, one shot each. Every game here was generated as a single HTML file — untouched — and plays itself. Costs and timings are real.">
+<script data-goatcounter="https://ddu.goatcounter.com/count"
+        async src="//gc.zgo.at/count.js"></script>
 <style>
   :root {
     --bg: #0b0e14; --card: #151a24; --text: #f2f5fa; --muted: #8b95a7;
@@ -40,9 +42,80 @@
   video { width: 100%; border-radius: 16px; border: 1px solid var(--line); margin-top: 8px; display: block; }
   footer { margin-top: 72px; color: var(--muted); font-size: 14px; border-top: 1px solid var(--line); padding-top: 20px; line-height: 1.6; }
   footer a { color: #7dd3fc; }
+
+  html { scroll-behavior: smooth; }
+  .rail {
+    position: fixed; top: 50%; right: 22px; transform: translateY(-50%);
+    display: flex; flex-direction: column; gap: 12px; z-index: 10;
+  }
+  .rail a {
+    width: 10px; height: 10px; border-radius: 50%; background: rgba(255,255,255,0.16);
+    border: 1px solid var(--line); position: relative; display: block;
+    transition: background .15s ease, transform .15s ease;
+  }
+  .rail a:hover, .rail a.active { background: #7dd3fc; transform: scale(1.35); }
+  .rail a .label {
+    position: absolute; right: 20px; top: 50%; transform: translateY(-50%);
+    white-space: nowrap; font-size: 12px; color: var(--text); background: var(--card);
+    border: 1px solid var(--line); padding: 4px 10px; border-radius: 6px; opacity: 0; pointer-events: none;
+    transition: opacity .12s ease;
+  }
+  .rail a:hover .label { opacity: 1; }
+  @media (max-width: 1300px) { .rail { display: none; } }
+
+  .tally {
+    display: inline-flex; align-items: center; gap: 10px; margin: 0 0 4px;
+    background: var(--card); border: 1px solid var(--line); border-radius: 999px;
+    padding: 8px 18px; font-family: "SF Mono", Menlo, monospace; font-size: 14px; color: var(--muted);
+  }
+  .tally b { color: var(--text); }
+
+  .mystery-card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 16px;
+    overflow: hidden; transition: border-color .12s ease;
+  }
+  .mystery-card.revealed { border-color: rgba(255,255,255,0.22); }
+
+  .poster-wrap { position: relative; aspect-ratio: 16/9; overflow: hidden; background: #000; }
+  .poster-wrap img { width: 100%; height: 100%; object-fit: cover; display: block; transition: filter .25s ease; }
+  .mystery-card:not(.revealed) .poster-wrap img { filter: brightness(0.85); }
+  .contestant-tag {
+    position: absolute; top: 10px; left: 10px; background: rgba(8,10,16,0.72);
+    border: 1px solid var(--line); border-radius: 8px; padding: 3px 10px;
+    font-family: "SF Mono", Menlo, monospace; font-size: 12px; letter-spacing: 1px; color: var(--muted);
+  }
+  .preview-btn {
+    position: absolute; bottom: 10px; right: 10px; background: rgba(8,10,16,0.78);
+    border: 1px solid rgba(255,255,255,0.25); color: var(--text); border-radius: 999px;
+    padding: 6px 14px; font-size: 12.5px; font-weight: 700; cursor: pointer;
+    transition: background .12s ease, border-color .12s ease;
+  }
+  .preview-btn:hover { background: rgba(255,255,255,0.12); border-color: rgba(255,255,255,0.4); }
+  .poster-wrap iframe { width: 100%; height: 100%; border: 0; display: block; background: #000; }
+
+  .card-body { padding: 16px; }
+
+  .guess-row { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 4px; }
+  .guess-btn {
+    background: rgba(255,255,255,0.04); border: 1px solid var(--line); color: var(--text);
+    border-radius: 8px; padding: 8px 6px; font-size: 12.5px; cursor: pointer;
+    transition: background .12s ease, border-color .12s ease;
+  }
+  .guess-btn:hover { background: rgba(255,255,255,0.09); border-color: rgba(255,255,255,0.22); }
+
+  .verdict { margin-top: 12px; font-size: 13px; font-weight: 700; padding: 6px 10px; border-radius: 8px; display: inline-block; }
+  .verdict.correct { color: var(--money); background: rgba(34,197,94,0.12); border: 1px solid rgba(34,197,94,0.4); }
+  .verdict.wrong { color: #fb923c; background: rgba(251,146,60,0.12); border: 1px solid rgba(251,146,60,0.4); }
+  .open-full { display: block; margin-top: 12px; font-size: 13px; font-weight: 700; color: #7dd3fc; text-decoration: none; }
+  .open-full:hover { text-decoration: underline; }
+
+  #blind-grid { grid-template-columns: repeat(4, 1fr); }
+  @media (max-width: 900px) { #blind-grid { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 520px) { #blind-grid { grid-template-columns: 1fr; } }
 </style>
 </head>
 <body>
+<nav class="rail" id="rail"></nav>
 <div class="wrap">
   <div class="kicker">SAME PROMPT · ONE SHOT · REAL COSTS</div>
   <h1>The Model Arena</h1>
@@ -51,7 +124,19 @@
   and every artifact playable — untouched, exactly as generated. Cost badges are computed
   from actual token usage.</p>
 
-  <h2>Round 1 · Fruit Ninja</h2>
+  <h2 id="round-6" style="margin-top:32px;">Guess the Model · Round 6 Bonus — Gargantua Redux</h2>
+  <p class="task">Same brief as Round 4, run again with a fourth contender — but this time the model
+  names are hidden. Look at the render, take your best guess, then see who actually made it.</p>
+
+  <div class="tally" id="tally">
+    <span>👁 <b id="tally-revealed">0</b>/4 revealed</span>
+    <span>·</span>
+    <span>✓ <b id="tally-correct">0</b> correct</span>
+  </div>
+
+  <div class="grid" id="blind-grid"></div>
+
+  <h2 id="round-1" style="margin-top:64px;">Round 1 · Fruit Ninja</h2>
   <p class="task">Build a Fruit Ninja–style slicer as one self-contained HTML file — itemized art
   checklist (wood-grain dojo, juice stains, glowing blade), reference screenshot attached,
   auto-demo required.</p>
@@ -80,7 +165,7 @@
     </a>
   </div>
 
-  <h2>Round 2 · Crossy Road</h2>
+  <h2 id="round-2">Round 2 · Crossy Road</h2>
   <p class="task">Build a Crossy Road–style endless hopper as one self-contained HTML file —
   procedurally generated lanes, cars, logs, trains — with an AI auto-play mode. First round
   we ever ran; all three shipped a working game on the first shot.</p>
@@ -109,7 +194,7 @@
     </a>
   </div>
 
-  <h2>Round 3 · Monument Valley</h2>
+  <h2 id="round-3">Round 3 · Monument Valley</h2>
   <p class="task">Recreate a Monument Valley screenshot — isometric impossible architecture, rotating
   crank mechanic, pastel palette. Reference image attached, auto-demo required.</p>
   <video src="media/ep04-wide-clean.mp4" muted loop playsinline controls preload="metadata"></video>
@@ -138,7 +223,7 @@
     </a>
   </div>
 
-  <h2>Round 4 · Gargantua</h2>
+  <h2 id="round-4">Round 4 · Gargantua</h2>
   <p class="task">Render <em>Interstellar</em>'s black hole in a single self-contained HTML file — a
   fullscreen ray-marched shader bending light around a Schwarzschild metric, procedural accretion
   disk, twin lensed rings, animated cinematic camera. Reference still attached, exposure discipline
@@ -164,7 +249,7 @@
     </a>
   </div>
 
-  <h2>Round 5 · HexGL Racer</h2>
+  <h2 id="round-5">Round 5 · HexGL Racer</h2>
   <p class="task">Build a HexGL-style anti-gravity racer as one self-contained HTML file — sculpted
   metal track over a hazy dusk sky, cyan glow trim, orange boost strips, UnrealBloomPass, HUD lap
   timer and speed gauge. Screenshot-as-wallpaper visual bar, auto-demo required.</p>
@@ -194,5 +279,143 @@
     All models served via <a href="https://aihubmix.com">AIHubMix</a> — Unified API, 800+ models.
   </footer>
 </div>
+<script>
+  const rail = document.getElementById("rail");
+  const headings = Array.from(document.querySelectorAll("h2[id]"));
+  headings.forEach((h) => {
+    const a = document.createElement("a");
+    a.href = "#" + h.id;
+    const label = document.createElement("span");
+    label.className = "label";
+    label.textContent = h.textContent;
+    a.appendChild(label);
+    rail.appendChild(a);
+  });
+  const railLinks = Array.from(rail.querySelectorAll("a"));
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach((entry) => {
+      if (!entry.isIntersecting) return;
+      railLinks.forEach((a) => a.classList.remove("active"));
+      const link = rail.querySelector(`a[href="#${entry.target.id}"]`);
+      if (link) link.classList.add("active");
+    });
+  }, { rootMargin: "-40% 0px -50% 0px" });
+  headings.forEach((h) => observer.observe(h));
+
+  function track(path) {
+    if (window.goatcounter && window.goatcounter.count) {
+      window.goatcounter.count({ path, event: true });
+    }
+  }
+
+  const CANDIDATES = ["Claude Fable 5", "GPT-5.6 Sol", "Kimi K3", "Qwen3.8 Max"];
+  const ACCENTS = { "Claude Fable 5": "#f97316", "GPT-5.6 Sol": "#a78bfa", "Kimi K3": "#38bdf8", "Qwen3.8 Max": "#22c55e" };
+
+  const CARDS = [
+    {
+      id: "a", poster: "media/proto/poster-a.png", game: "games/proto/proto-a.html", answer: "Claude Fable 5",
+      cost: "$0.91", time: "~4 min",
+      note: "First try, no compile errors. Clean tone mapping keeps the disk's inner edge burning white while the shadow stays pure black."
+    },
+    {
+      id: "b", poster: "media/proto/poster-b.png", game: "games/proto/proto-b.html", answer: "GPT-5.6 Sol",
+      cost: "$1.28", time: "~14 min",
+      note: "Heaviest reasoning spend of the round. Dense filament detail on the accretion disk."
+    },
+    {
+      id: "c", poster: "media/proto/poster-c.png", game: "games/proto/proto-c.html", answer: "Kimi K3",
+      cost: "$0.50", time: "~18 min",
+      note: "Cheapest of the four. Simpler lensing rings but a solid, legible render."
+    },
+    {
+      id: "d", poster: "media/proto/poster-d.png", game: "games/proto/proto-d.html", answer: "Qwen3.8 Max",
+      cost: "~$0.18", time: "~35 min",
+      note: "The prompt's exposure-discipline clause exists because of a run exactly like this one — the whole frame blew out white."
+    },
+  ];
+
+  const blindGrid = document.getElementById("blind-grid");
+  const blindState = {};
+
+  CARDS.forEach((c) => {
+    blindState[c.id] = { revealed: false, correct: null };
+    const card = document.createElement("div");
+    card.className = "mystery-card";
+    card.id = "card-" + c.id;
+    card.innerHTML = `
+      <div class="poster-wrap" id="poster-${c.id}">
+        <img src="${c.poster}" alt="mystery render">
+        <div class="contestant-tag">CONTESTANT ${c.id.toUpperCase()}</div>
+        <button class="preview-btn" data-preview="${c.id}">▶ Preview</button>
+      </div>
+      <div class="card-body">
+        <div class="guess-zone">
+          <div class="guess-row">
+            ${CANDIDATES.map(name => `<button class="guess-btn" data-card="${c.id}" data-guess="${name}">${name}</button>`).join("")}
+          </div>
+        </div>
+      </div>
+    `;
+    blindGrid.appendChild(card);
+  });
+
+  blindGrid.addEventListener("click", (e) => {
+    const previewBtn = e.target.closest(".preview-btn");
+    if (previewBtn) {
+      const cardId = previewBtn.dataset.preview;
+      const c = CARDS.find(x => x.id === cardId);
+      const posterWrap = document.getElementById("poster-" + cardId);
+      const iframe = document.createElement("iframe");
+      iframe.src = c.game;
+      iframe.sandbox = "allow-scripts allow-pointer-lock";
+      posterWrap.querySelector("img").replaceWith(iframe);
+      previewBtn.remove();
+      track("blind-preview-" + cardId);
+      return;
+    }
+
+    const btn = e.target.closest(".guess-btn");
+    if (!btn) return;
+    const cardId = btn.dataset.card;
+    if (blindState[cardId].revealed) return;
+    const guess = btn.dataset.guess;
+    const c = CARDS.find(x => x.id === cardId);
+    const correct = guess === c.answer;
+    blindState[cardId] = { revealed: true, correct };
+
+    const cardEl = document.getElementById("card-" + cardId);
+    cardEl.classList.add("revealed");
+    cardEl.querySelector(".contestant-tag").textContent = c.answer.toUpperCase();
+    cardEl.querySelector(".card-body").innerHTML = `
+      <div class="model"><span class="dot" style="background:${ACCENTS[c.answer]}"></span>${c.answer}</div>
+      <div class="meta"><span class="badge">${c.cost}</span><span class="time">${c.time}</span></div>
+      <div class="note">${c.note}</div>
+      <div class="verdict ${correct ? "correct" : "wrong"}">${correct ? "✓ Correct!" : `✗ Wrong — it was actually ${c.answer}`}</div>
+      <a class="open-full" data-card="${c.id}" href="${c.game}" target="_blank" rel="noopener">Open full / view source ↗</a>
+    `;
+    track(correct ? "blind-guess-correct" : "blind-guess-wrong");
+    updateTally();
+  });
+
+  document.addEventListener("click", (e) => {
+    const openFull = e.target.closest(".open-full");
+    if (openFull) {
+      track("blind-open-full-" + openFull.dataset.card);
+      return;
+    }
+    const card = e.target.closest("a.card");
+    if (card) {
+      const slug = card.getAttribute("href").replace(/^games\//, "").replace(/\.html$/, "");
+      track("try-it-" + slug);
+    }
+  });
+
+  function updateTally() {
+    const revealed = Object.values(blindState).filter(s => s.revealed);
+    const correct = revealed.filter(s => s.correct).length;
+    document.getElementById("tally-revealed").textContent = revealed.length;
+    document.getElementById("tally-correct").textContent = correct;
+  }
+</script>
 </body>
 </html>
