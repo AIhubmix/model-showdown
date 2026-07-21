@@ -99,7 +99,7 @@ MODELS = {
     "coding-kimi-k3": {"display": "Kimi K3", "max_tokens": 100000,
                        "retries": 8, "lineup": False},
     # Qwen3.8 Max Preview：大 HTML 产物给足输出预算；显式 --models 选入
-    "qwen3.8-max-preview": {"display": "Qwen3.8 Max", "max_tokens": 65000, "lineup": False},
+    "qwen3.8-max-preview": {"display": "Qwen3.8 Max", "max_tokens": 120000, "lineup": False},
 }
 DEFAULT_MAX_TOKENS = 60000
 

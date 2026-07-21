@@ -19,6 +19,7 @@ export type ModelResult = {
   verdict: string; // short English verdict chip
   accent: string;
   startFrom?: number; // 视频起播帧偏移：让首帧落在画面最丰富/对比最强的一刻
+  zoom?: number; // 面板内居中缩放：对齐各家不同表观大小（如黑洞尺寸）用，默认 1
 };
 
 export type ShowdownProps = {
@@ -156,12 +157,13 @@ const Panel: React.FC<{
         </div>
         <CostBadge cost={m.cost} scale={scale} />
       </div>
-      <div style={{ width: w, height: h - headerH, background: '#000' }}>
+      <div style={{ width: w, height: h - headerH, background: '#000', overflow: 'hidden' }}>
         <OffthreadVideo
           src={staticFile(m.video)}
           muted
           startFrom={m.startFrom ?? 0}
-          style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+          style={{ width: '100%', height: '100%', objectFit: 'cover',
+            transform: `scale(${m.zoom ?? 1})`, transformOrigin: 'center center' }}
         />
       </div>
     </div>
@@ -202,7 +204,8 @@ const Panels: React.FC<ShowdownProps> = ({ models, tagline, layout = 'horizontal
               src={staticFile(m.video)}
               muted
               startFrom={m.startFrom ?? 0}
-              style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+              style={{ width: '100%', height: '100%', objectFit: 'cover',
+            transform: `scale(${m.zoom ?? 1})`, transformOrigin: 'center center' }}
             />
             {i > 0 ? (
               <div
@@ -422,13 +425,15 @@ export const Showdown: React.FC<ShowdownProps> = (props) => {
       <Sequence from={introFrames} durationInFrames={playFrames}>
         <Panels {...props} />
       </Sequence>
-      <Sequence from={introFrames + playFrames} durationInFrames={outroFrames}>
-        <Scoreboard {...props} />
-      </Sequence>
+      {outroFrames > 0 ? (
+        <Sequence from={introFrames + playFrames} durationInFrames={outroFrames}>
+          <Scoreboard {...props} />
+        </Sequence>
+      ) : null}
       {props.tagline && props.layout !== 'fullbleed' ? (
         <BrandBar tagline={props.tagline} />
       ) : null}
-      {props.tagline && props.layout === 'fullbleed' ? (
+      {props.tagline && props.layout === 'fullbleed' && outroFrames > 0 ? (
         // fullbleed：播放期不遮挡画面，品牌条只在片尾账单页出现
         <Sequence from={introFrames + playFrames} durationInFrames={outroFrames}>
           <BrandBar tagline={props.tagline} />

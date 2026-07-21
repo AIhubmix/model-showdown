@@ -49,12 +49,15 @@ await page.waitForTimeout(waitS * 1000);
 await page.evaluate(({ wheelTotal, orbitMs, vpW, vpH }) => {
   const cx = vpW / 2, cy = vpH / 2;
   const canvas = document.querySelector('canvas') || document.body;
+  // 同时派发到 canvas 和 window：有的产物把 pointermove/up 绑在 canvas(renderer.domElement)、
+  // 有的绑在 window。只发 window 会让「绑 canvas」的那家(如 kimi/gpt)完全不转（踩过）。
   const fire = (type, x, y) => {
-    const ev = new PointerEvent(type, {
+    const mk = () => new PointerEvent(type, {
       clientX: x, clientY: y, pointerId: 1, isPrimary: true,
       bubbles: true, cancelable: true, view: window,
     });
-    (type === 'pointerdown' ? canvas : window).dispatchEvent(ev);
+    canvas.dispatchEvent(mk());
+    window.dispatchEvent(mk());
   };
   const start = performance.now();
   const wheelMs = wheelTotal !== 0 ? 1200 : 0;
