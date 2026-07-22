@@ -228,7 +228,7 @@
       ],
     },
     {
-      id: 6, title: `Round 6 · Global View`, episode: "ep13", cols: 2,
+      id: 6, title: `Round 6 · Global View`, episode: "ep13", cols: 2, aspect: "16/9",
       summary: `Build a live-data 3D flight-tracking dashboard as one self-contained HTML file —
       dark-navy hero globe with a real day/night terminator, dual-layer atmosphere bloom, glowing
       flight arcs, glassmorphic stat cards, a drag-to-orbit + scroll-to-zoom camera. Strict exposure
@@ -276,7 +276,7 @@
       card.className = "mystery-card";
       card.id = "r" + round.id + "-" + m.letter;
       card.innerHTML = `
-        <div class="poster-wrap" id="poster-r${round.id}-${m.letter}">
+        <div class="poster-wrap" id="poster-r${round.id}-${m.letter}"${round.aspect ? ` style="aspect-ratio:${round.aspect}"` : ""}>
           <img src="${m.poster}" alt="mystery render">
           <div class="contestant-tag">CONTESTANT ${m.letter.toUpperCase()}</div>
           <button class="preview-btn" data-round="${round.id}" data-slot="${m.letter}">▶ Preview</button>
