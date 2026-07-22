@@ -1,0 +1,1315 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Global Logistics AI Dashboard</title>
+  
+  <!-- Typography Imports -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+
+  <style>
+    /* ==========================================================================
+       DESIGN SYSTEM & VARIABLES
+       ========================================================================== */
+    :root {
+      --bg-center: #0c142c;
+      --bg-edge: #02050b;
+      --accent-yellow: #f5c518;
+      --accent-yellow-glow: rgba(245, 197, 24, 0.35);
+      --accent-blue: #3b82f6;
+      --accent-blue-card: #4f75ff;
+      --accent-green: #10b981;
+      
+      --glass-bg: rgba(18, 26, 47, 0.55);
+      --glass-bg-hover: rgba(28, 40, 70, 0.65);
+      --glass-border: rgba(255, 255, 255, 0.14);
+      --glass-border-light: rgba(255, 255, 255, 0.22);
+      --glass-shadow: 0 12px 32px 0 rgba(0, 0, 0, 0.45);
+      
+      --text-main: #ffffff;
+      --text-muted: #8e9bb0;
+      --text-dim: #5c6b84;
+      
+      --font-display: 'Space Grotesk', -apple-system, sans-serif;
+      --font-body: 'Inter', -apple-system, sans-serif;
+
+      --space-4: 4px;
+      --space-8: 8px;
+      --space-12: 12px;
+      --space-16: 16px;
+      --space-24: 24px;
+      --space-32: 32px;
+      --space-48: 48px;
+
+      --radius-8: 8px;
+      --radius-12: 12px;
+      --radius-16: 16px;
+      --radius-full: 999px;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+    }
+
+    body, html {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      font-family: var(--font-body);
+      background: radial-gradient(circle at 50% 50%, var(--bg-center) 0%, #060b18 55%, var(--bg-edge) 100%);
+      color: var(--text-main);
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* Vignette overlay */
+    .vignette {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      background: radial-gradient(circle at 50% 50%, transparent 60%, rgba(2, 5, 11, 0.8) 100%);
+      z-index: 2;
+    }
+
+    /* 3D Canvas */
+    #webgl-container {
+      position: absolute;
+      inset: 0;
+      z-index: 1;
+    }
+
+    /* ==========================================================================
+       GLASSMORPHISM UI OVERLAYS
+       ========================================================================== */
+    .ui-layer {
+      position: absolute;
+      inset: 0;
+      z-index: 10;
+      pointer-events: none;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: var(--space-24);
+    }
+
+    .interactive {
+      pointer-events: auto;
+    }
+
+    /* Common Glass Card */
+    .glass-panel {
+      background: var(--glass-bg);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border: 1px solid var(--glass-border);
+      box-shadow: var(--glass-shadow);
+    }
+
+    /* --- TOP HEADER --- */
+    .top-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      width: 100%;
+    }
+
+    .brand-section {
+      display: flex;
+      align-items: center;
+      gap: var(--space-12);
+    }
+
+    .logo-btn {
+      width: 36px;
+      height: 36px;
+      border-radius: var(--radius-8);
+      background: var(--accent-yellow);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #000;
+      box-shadow: 0 0 16px var(--accent-yellow-glow);
+    }
+
+    .model-capsule {
+      display: flex;
+      align-items: center;
+      gap: var(--space-8);
+      padding: 6px var(--space-12);
+      border-radius: var(--radius-full);
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .header-center {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    .header-title {
+      font-family: var(--font-display);
+      font-size: 28px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      color: #fff;
+    }
+
+    .live-status {
+      display: flex;
+      align-items: center;
+      gap: var(--space-8);
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-muted);
+      letter-spacing: 0.05em;
+      margin-top: 2px;
+    }
+
+    .pulse-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background-color: var(--accent-green);
+      box-shadow: 0 0 8px var(--accent-green);
+      animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+      0% { transform: scale(0.95); opacity: 0.8; }
+      50% { transform: scale(1.3); opacity: 1; box-shadow: 0 0 12px var(--accent-green); }
+      100% { transform: scale(0.95); opacity: 0.8; }
+    }
+
+    .user-section {
+      display: flex;
+      align-items: center;
+      gap: var(--space-12);
+    }
+
+    .user-profile {
+      display: flex;
+      align-items: center;
+      gap: var(--space-8);
+      padding: 4px 12px 4px 4px;
+      border-radius: var(--radius-full);
+    }
+
+    .avatar {
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      background: #475569;
+      background-image: url('https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=100&q=80');
+      background-size: cover;
+    }
+
+    .icon-btn {
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .icon-btn:hover {
+      background: var(--glass-bg-hover);
+      border-color: var(--glass-border-light);
+    }
+
+    .notification-dot {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      width: 6px;
+      height: 6px;
+      background: var(--accent-yellow);
+      border-radius: 50%;
+    }
+
+    /* --- SIDEBAR NAV --- */
+    .middle-body {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex: 1;
+      margin-top: var(--space-16);
+      margin-bottom: var(--space-16);
+    }
+
+    .sidebar-nav {
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-16);
+      padding: var(--space-12) var(--space-8);
+      border-radius: var(--radius-full);
+      align-items: center;
+    }
+
+    .nav-item {
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-muted);
+      cursor: pointer;
+      transition: all 0.2s ease;
+      position: relative;
+    }
+
+    .nav-item:hover, .nav-item.active {
+      color: #fff;
+      background: rgba(255, 255, 255, 0.1);
+    }
+
+    .nav-item.active {
+      border: 1px solid var(--glass-border-light);
+    }
+
+    .alert-badge {
+      position: absolute;
+      top: 6px;
+      right: 6px;
+      width: 6px;
+      height: 6px;
+      background: var(--accent-yellow);
+      border-radius: 50%;
+    }
+
+    /* --- LEFT HERO TEXT --- */
+    .left-hero {
+      max-width: 280px;
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-16);
+      margin-left: var(--space-24);
+    }
+
+    .ai-capsule {
+      align-self: flex-start;
+      padding: 4px var(--space-12);
+      border-radius: var(--radius-full);
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-muted);
+    }
+
+    .hero-title {
+      font-family: var(--font-display);
+      font-size: 32px;
+      font-weight: 700;
+      line-height: 1.15;
+      letter-spacing: -0.02em;
+    }
+
+    .hero-link {
+      display: inline-flex;
+      align-items: center;
+      gap: var(--space-8);
+      color: var(--accent-yellow);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      text-decoration: none;
+      border-bottom: 1.5px solid var(--accent-yellow);
+      padding-bottom: 2px;
+      width: fit-content;
+      cursor: pointer;
+      transition: opacity 0.2s;
+    }
+
+    .hero-link:hover {
+      opacity: 0.8;
+    }
+
+    /* --- RIGHT STATISTICS CARD --- */
+    .stats-card {
+      padding: var(--space-24);
+      border-radius: var(--radius-16);
+      width: 240px;
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-24);
+    }
+
+    .stats-title {
+      font-family: var(--font-display);
+      font-size: 18px;
+      font-weight: 600;
+    }
+
+    .stat-group {
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-4);
+    }
+
+    .stat-label {
+      font-size: 11px;
+      color: var(--text-muted);
+      font-weight: 500;
+    }
+
+    .stat-row {
+      display: flex;
+      align-items: baseline;
+      gap: var(--space-12);
+    }
+
+    .stat-value {
+      font-family: var(--font-display);
+      font-size: 26px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+
+    .growth-badge {
+      display: flex;
+      align-items: center;
+      gap: 2px;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--accent-green);
+    }
+
+    /* --- BOTTOM CONTROLS & DYNAMIC DRAWER --- */
+    .bottom-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      width: 100%;
+      position: relative;
+    }
+
+    .coords-display {
+      font-family: monospace;
+      font-size: 11px;
+      color: var(--text-dim);
+      line-height: 1.5;
+    }
+
+    .center-controls {
+      position: absolute;
+      left: 50%;
+      transform: translateX(-50%);
+      bottom: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: var(--space-8);
+    }
+
+    .mode-toggle {
+      display: flex;
+      padding: 3px;
+      border-radius: var(--radius-full);
+      gap: 2px;
+    }
+
+    .toggle-btn {
+      padding: 6px 16px;
+      border-radius: var(--radius-full);
+      font-size: 12px;
+      font-weight: 600;
+      border: none;
+      background: transparent;
+      color: var(--text-muted);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.2s;
+    }
+
+    .toggle-btn.active {
+      background: #ffffff;
+      color: #000;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+    }
+
+    .activities-trigger {
+      padding: 6px var(--space-16);
+      border-radius: var(--radius-8) var(--radius-8) 0 0;
+      border-bottom: none;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: var(--space-8);
+      transition: background 0.2s;
+    }
+
+    .right-zoom-controls {
+      display: flex;
+      align-items: center;
+      gap: var(--space-8);
+    }
+
+    .zoom-label {
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-right: var(--space-4);
+    }
+
+    .zoom-btn {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 600;
+    }
+
+    /* --- EXPANDABLE ACTIVITIES PANEL --- */
+    .activities-drawer {
+      position: absolute;
+      bottom: -400px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: min(880px, 92vw);
+      display: flex;
+      gap: var(--space-16);
+      z-index: 20;
+      transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+      pointer-events: auto;
+    }
+
+    .activities-drawer.open {
+      transform: translate(-50%, -440px);
+    }
+
+    .drawer-left-table {
+      flex: 1.4;
+      border-radius: var(--radius-16);
+      padding: var(--space-24);
+      background: rgba(255, 255, 255, 0.92);
+      color: #0f172a;
+      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.5);
+    }
+
+    .table-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: var(--space-24);
+    }
+
+    .table-title {
+      font-family: var(--font-display);
+      font-size: 20px;
+      font-weight: 700;
+      color: #0f172a;
+    }
+
+    .search-input {
+      background: #f1f5f9;
+      border: none;
+      padding: 6px 12px;
+      border-radius: var(--radius-8);
+      font-size: 12px;
+      width: 140px;
+    }
+
+    .cargo-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+    }
+
+    .cargo-table th {
+      text-align: left;
+      color: #64748b;
+      font-weight: 600;
+      padding-bottom: var(--space-12);
+      font-size: 11px;
+      letter-spacing: 0.02em;
+    }
+
+    .cargo-table td {
+      padding: 10px 0;
+      border-top: 1px solid #e2e8f0;
+      vertical-align: middle;
+    }
+
+    .cargo-id {
+      display: flex;
+      align-items: center;
+      gap: var(--space-8);
+      font-weight: 700;
+    }
+
+    .plane-icon-circle {
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      background: var(--accent-yellow);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 10px;
+    }
+
+    .route-progress {
+      display: flex;
+      align-items: center;
+      gap: var(--space-8);
+      font-weight: 600;
+    }
+
+    .progress-bar-line {
+      width: 70px;
+      height: 4px;
+      background: #e2e8f0;
+      border-radius: var(--radius-full);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .progress-bar-fill {
+      height: 100%;
+      background: var(--accent-blue);
+      border-radius: var(--radius-full);
+    }
+
+    .status-badge {
+      padding: 4px 10px;
+      border-radius: var(--radius-full);
+      font-size: 11px;
+      font-weight: 600;
+      display: inline-block;
+    }
+
+    .status-pending { background: #dbeafe; color: #1e40af; }
+    .status-arrived { background: #fef3c7; color: #92400e; }
+
+    .drawer-right-card {
+      flex: 1;
+      border-radius: var(--radius-16);
+      padding: var(--space-24);
+      background: var(--accent-blue-card);
+      color: #fff;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      box-shadow: 0 20px 40px rgba(59, 130, 246, 0.3);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .card-top-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .card-title {
+      font-family: var(--font-display);
+      font-size: 18px;
+      font-weight: 600;
+    }
+
+    .details-btn {
+      background: var(--accent-yellow);
+      color: #000;
+      border: none;
+      padding: 6px 14px;
+      border-radius: var(--radius-full);
+      font-size: 11px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    .risk-stat {
+      margin-top: var(--space-16);
+    }
+
+    .risk-number {
+      font-family: var(--font-display);
+      font-size: 42px;
+      font-weight: 700;
+      line-height: 1;
+    }
+
+    .risk-subtext {
+      font-size: 12px;
+      opacity: 0.8;
+      margin-top: 6px;
+    }
+
+    .weather-arc {
+      height: 70px;
+      width: 100%;
+      border-top: 2px dashed rgba(255,255,255,0.3);
+      border-radius: 100px 100px 0 0;
+      margin-top: var(--space-16);
+      display: flex;
+      align-items: flex-end;
+      justify-content: center;
+      padding-bottom: 4px;
+      font-size: 11px;
+      font-weight: 600;
+    }
+
+    /* --- HTML OVERLAY LABELS ON 3D GLOBE --- */
+    .globe-label {
+      position: absolute;
+      transform: translate(-50%, -50%);
+      pointer-events: auto;
+      transition: opacity 0.2s ease;
+      z-index: 5;
+    }
+
+    .city-tag {
+      background: #ffffff;
+      color: #0f172a;
+      font-weight: 700;
+      font-size: 11px;
+      padding: 3px 8px;
+      border-radius: 6px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+      letter-spacing: 0.02em;
+    }
+
+    .flight-badge {
+      background: rgba(15, 23, 42, 0.85);
+      border: 1px solid var(--glass-border-light);
+      backdrop-filter: blur(8px);
+      color: #fff;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 3px 8px;
+      border-radius: var(--radius-full);
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .plane-marker {
+      width: 28px;
+      height: 28px;
+      background: var(--accent-yellow);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #000;
+      box-shadow: 0 0 16px var(--accent-yellow);
+    }
+  </style>
+
+  <!-- Import Map for Three.js -->
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+
+  <div class="vignette"></div>
+  <div id="webgl-container"></div>
+
+  <!-- Dynamic UI Layer -->
+  <div class="ui-layer">
+    <!-- Top Bar -->
+    <header class="top-bar">
+      <div class="brand-section interactive">
+        <div class="logo-btn">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
+        </div>
+        <div class="model-capsule glass-panel">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L2 19h20L12 2zm0 3.8L18.4 17H5.6L12 5.8z"/></svg>
+          <span>Gemini 3.6</span>
+        </div>
+      </div>
+
+      <div class="header-center">
+        <h1 class="header-title">Global View</h1>
+        <div class="live-status">
+          <span class="pulse-dot"></span>
+          <span>LIVE TRACKING</span>
+          <span style="color: var(--text-dim);">153 ms</span>
+        </div>
+      </div>
+
+      <div class="user-section interactive">
+        <div class="user-profile glass-panel">
+          <div class="avatar"></div>
+          <span style="font-size: 13px; font-weight: 600;">Kai</span>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+        </div>
+        <div class="icon-btn glass-panel">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+          <div class="notification-dot"></div>
+        </div>
+      </div>
+    </header>
+
+    <!-- Sidebar & Hero Info -->
+    <div class="middle-body">
+      <div class="sidebar-nav glass-panel interactive">
+        <div class="nav-item active">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+        </div>
+        <div class="nav-item">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
+          <div class="alert-badge"></div>
+        </div>
+        <div class="nav-item">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        </div>
+        <div class="nav-item">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+        </div>
+        <div class="nav-item" style="margin-top: auto;">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        </div>
+      </div>
+
+      <div class="left-hero">
+        <div class="ai-capsule glass-panel">AI-Powered</div>
+        <h2 class="hero-title">Plan Your Route with AI Now ✨</h2>
+        <a class="hero-link interactive">
+          <span>HOW IT WORKS</span>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+        </a>
+      </div>
+
+      <div class="stats-card glass-panel interactive">
+        <div class="stats-title">Main Statistics</div>
+        <div class="stat-group">
+          <div class="stat-label">Monthly Delivered</div>
+          <div class="stat-row">
+            <span class="stat-value">1,021</span>
+            <span class="growth-badge">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
+              +32%
+            </span>
+          </div>
+        </div>
+        <div class="stat-group">
+          <div class="stat-label">Yearly Delivered</div>
+          <div class="stat-row">
+            <span class="stat-value">4,603</span>
+            <span class="growth-badge">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
+              +12%
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Bottom Bar Controls -->
+    <div class="bottom-bar">
+      <div class="coords-display" id="coords-text">
+        X: 30.297435<br>Y: -102.116543
+      </div>
+
+      <div class="center-controls interactive">
+        <div class="mode-toggle glass-panel">
+          <button class="toggle-btn active" id="btn-3d">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
+            3D
+          </button>
+          <button class="toggle-btn" id="btn-2d">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
+            2D
+          </button>
+        </div>
+        <button class="activities-trigger glass-panel" id="activities-btn">
+          <span>ACTIVITIES</span>
+          <svg id="drawer-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 15l-6-6-6 6"/></svg>
+        </button>
+      </div>
+
+      <div class="right-zoom-controls interactive">
+        <span class="zoom-label">Zoom</span>
+        <div class="zoom-btn glass-panel" id="zoom-in">+</div>
+        <div class="zoom-btn glass-panel" id="zoom-out">-</div>
+        <div class="zoom-btn glass-panel" id="btn-fullscreen">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Sliding Activities Drawer -->
+  <div class="activities-drawer" id="activities-drawer">
+    <div class="drawer-left-table">
+      <div class="table-header">
+        <h3 class="table-title">Activities</h3>
+        <input type="text" class="search-input" placeholder="Q Search">
+      </div>
+      <table class="cargo-table">
+        <thead>
+          <tr>
+            <th>CARGO ID</th>
+            <th>DESTINATION</th>
+            <th>ARRIVAL DATE</th>
+            <th>STATUS</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>
+              <div class="cargo-id">
+                <div class="plane-icon-circle">✈</div>
+                <span>AA-845</span>
+              </div>
+            </td>
+            <td>
+              <div class="route-progress">
+                <span>USA</span>
+                <div class="progress-bar-line"><div class="progress-bar-fill" style="width: 60%;"></div></div>
+                <span>COL</span>
+              </div>
+            </td>
+            <td>Jun 5, 2024</td>
+            <td><span class="status-badge status-pending">Pending</span></td>
+          </tr>
+          <tr>
+            <td>
+              <div class="cargo-id">
+                <div class="plane-icon-circle" style="background:#3b82f6; color:#fff;">📦</div>
+                <span>JL-748</span>
+              </div>
+            </td>
+            <td>
+              <div class="route-progress">
+                <span>CHN</span>
+                <div class="progress-bar-line"><div class="progress-bar-fill" style="width: 80%;"></div></div>
+                <span>KOR</span>
+              </div>
+            </td>
+            <td>Jun 3, 2024</td>
+            <td><span class="status-badge status-pending">Pending</span></td>
+          </tr>
+          <tr>
+            <td>
+              <div class="cargo-id">
+                <div class="plane-icon-circle" style="background:#6366f1; color:#fff;">✈</div>
+                <span>MU-131</span>
+              </div>
+            </td>
+            <td>
+              <div class="route-progress">
+                <span>JPN</span>
+                <div class="progress-bar-line"><div class="progress-bar-fill" style="width: 100%;"></div></div>
+                <span>DEU</span>
+              </div>
+            </td>
+            <td>Apr 25, 2024</td>
+            <td><span class="status-badge status-arrived">Arrived</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="drawer-right-card">
+      <div class="card-top-row">
+        <span class="card-title">Risk of Cargo Loss</span>
+        <button class="details-btn">DETAILS</button>
+      </div>
+      <div class="risk-stat">
+        <div class="risk-number">10%</div>
+        <div class="risk-subtext">Minimal risk due to good weather</div>
+      </div>
+      <div class="weather-arc">
+        <span>☀️ Sunny</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- HTML Overlays Container on 3D Globe -->
+  <div id="labels-container" style="position: absolute; inset:0; pointer-events:none; z-index:4;">
+    <div class="globe-label city-tag" id="tag-usa">USA</div>
+    <div class="globe-label city-tag" id="tag-col">COL</div>
+    <div class="globe-label flight-badge" id="badge-aa">AA-845</div>
+    <div class="globe-label plane-marker" id="plane-aa">✈</div>
+    <div class="globe-label flight-badge" id="badge-jl">JL-748 📦</div>
+    <div class="globe-label flight-badge" id="badge-mu">MU-131 ✈</div>
+  </div>
+
+  <!-- ==========================================================================
+     THREE.JS LOGIC & SCENE SETUP
+     ========================================================================== -->
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+    import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+    import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+
+    // --- CONFIG & CONSTANTS ---
+    const GLOBE_RADIUS = 160;
+    const TEXTURE_BASE = 'https://threejs.org/examples/textures/planets/';
+    
+    const CITY_COORDS = {
+      USA: { lat: 38.0, lon: -97.0 },
+      COL: { lat: 4.5, lon: -74.2 },
+      JPN: { lat: 36.2, lon: 138.2 },
+      DEU: { lat: 51.1, lon: 10.4 },
+      CHN: { lat: 35.8, lon: 104.1 },
+      KOR: { lat: 35.9, lon: 127.7 }
+    };
+
+    // --- SCENE SETUP ---
+    const container = document.getElementById('webgl-container');
+    const scene = new THREE.Scene();
+    scene.fog = new THREE.FogExp2(0x060b18, 0.0008);
+
+    const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 1, 3000);
+    camera.position.set(0, 80, 580);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: "high-performance" });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 0.95;
+    container.appendChild(renderer.domElement);
+
+    // --- POST PROCESSING (BLOOM) ---
+    const renderScene = new RenderPass(scene, camera);
+    const bloomPass = new UnrealBloomPass(
+      new THREE.Vector2(window.innerWidth, window.innerHeight),
+      0.38,  // Strength capped strictly
+      0.6,   // Radius
+      0.75   // Threshold
+    );
+    const composer = new EffectComposer(renderer);
+    composer.addPass(renderScene);
+    composer.addPass(bloomPass);
+
+    // --- CONTROLS ---
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.05;
+    controls.rotateSpeed = 0.8;
+    controls.minDistance = 280;
+    controls.maxDistance = 750;
+    controls.enablePan = false;
+
+    // --- LIGHTING (Sun / Terminator setup) ---
+    const ambientLight = new THREE.AmbientLight(0x101a35, 0.4);
+    scene.add(ambientLight);
+
+    const sunLight = new THREE.DirectionalLight(0xffffff, 1.1);
+    sunLight.position.set(400, 150, 300);
+    scene.add(sunLight);
+
+    // Dynamic backlight for subtle contrast
+    const rimLight = new THREE.DirectionalLight(0x3b82f6, 0.3);
+    rimLight.position.set(-400, -100, -300);
+    scene.add(rimLight);
+
+    // --- GLOBE & TEXTURES ---
+    const globeGroup = new THREE.Group();
+    scene.add(globeGroup);
+
+    // Helper: Procedural Earth Fallback Texture Generator
+    function createProceduralEarthTexture() {
+      const canvas = document.createElement('canvas');
+      canvas.width = 1024;
+      canvas.height = 512;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#0a1936';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = '#1e3a5f';
+      for (let i = 0; i < 1200; i++) {
+        const x = Math.random() * canvas.width;
+        const y = Math.random() * canvas.height;
+        const r = Math.random() * 25 + 5;
+        ctx.beginPath();
+        ctx.arc(x, y, r, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      return new THREE.CanvasTexture(canvas);
+    }
+
+    const textureLoader = new THREE.TextureLoader();
+    let earthMap, normalMap, specularMap, cloudsMap;
+
+    // Load Earth Textures with Fallbacks
+    earthMap = textureLoader.load(
+      TEXTURE_BASE + 'earth_atmos_2048.jpg',
+      undefined, undefined,
+      () => { earthMap = createProceduralEarthTexture(); earthMaterial.map = earthMap; earthMaterial.needsUpdate = true; }
+    );
+    normalMap = textureLoader.load(TEXTURE_BASE + 'earth_normal_2048.jpg', undefined, undefined, () => {});
+    specularMap = textureLoader.load(TEXTURE_BASE + 'earth_specular_2048.jpg', undefined, undefined, () => {});
+    cloudsMap = textureLoader.load(TEXTURE_BASE + 'earth_clouds_1024.png', undefined, undefined, () => {});
+
+    // Earth Base Sphere Geometry
+    const globeGeometry = new THREE.SphereGeometry(GLOBE_RADIUS, 64, 64);
+    const earthMaterial = new THREE.MeshPhongMaterial({
+      map: earthMap,
+      normalMap: normalMap,
+      normalScale: new THREE.Vector2(0.3, 0.3),
+      specularMap: specularMap,
+      specular: new THREE.Color(0x222222),
+      shininess: 6, // Low shininess to prevent overexposure
+    });
+
+    const earthMesh = new THREE.Mesh(globeGeometry, earthMaterial);
+    globeGroup.add(earthMesh);
+
+    // Atmosphere Glow Outer Sphere (Fresnel Rim Shader)
+    const atmosphereShader = {
+      vertexShader: `
+        varying vec3 vNormal;
+        void main() {
+          vNormal = normalize(normalMatrix * normal);
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        varying vec3 vNormal;
+        void main() {
+          float intensity = pow(0.62 - dot(vNormal, vec3(0, 0, 1.0)), 2.8);
+          gl_FragColor = vec4(0.23, 0.51, 0.96, 1.0) * intensity;
+        }
+      `
+    };
+
+    const atmosphereMaterial = new THREE.ShaderMaterial({
+      vertexShader: atmosphereShader.vertexShader,
+      fragmentShader: atmosphereShader.fragmentShader,
+      blending: THREE.AdditiveBlending,
+      side: THREE.BackSide,
+      transparent: true
+    });
+
+    const atmosphereMesh = new THREE.Mesh(
+      new THREE.SphereGeometry(GLOBE_RADIUS * 1.10, 64, 64),
+      atmosphereMaterial
+    );
+    globeGroup.add(atmosphereMesh);
+
+    // Clouds Layer Sphere
+    const cloudsGeometry = new THREE.SphereGeometry(GLOBE_RADIUS * 1.018, 64, 64);
+    const cloudsMaterial = new THREE.MeshPhongMaterial({
+      map: cloudsMap,
+      transparent: true,
+      opacity: 0.32,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false
+    });
+    const cloudsMesh = new THREE.Mesh(cloudsGeometry, cloudsMaterial);
+    globeGroup.add(cloudsMesh);
+
+    // --- COORD CONVERSION HELPERS ---
+    function latLonToVector3(lat, lon, radius = GLOBE_RADIUS) {
+      const phi = (90 - lat) * (Math.PI / 180);
+      const theta = (lon + 180) * (Math.PI / 180);
+      const x = -(radius * Math.sin(phi) * Math.cos(theta));
+      const z = (radius * Math.sin(phi) * Math.sin(theta));
+      const y = (radius * Math.cos(phi));
+      return new THREE.Vector3(x, y, z);
+    }
+
+    // --- FLIGHT ARCS & BEZIER CURVES ---
+    function createCurvedRoute(startCoord, endCoord, colorHex = 0xf5c518) {
+      const p1 = latLonToVector3(startCoord.lat, startCoord.lon);
+      const p2 = latLonToVector3(endCoord.lat, endCoord.lon);
+
+      // Midpoint pulled outward
+      const distance = p1.distanceTo(p2);
+      const mid = p1.clone().add(p2).multiplyScalar(0.5);
+      const midLength = mid.length();
+      mid.normalize().multiplyScalar(GLOBE_RADIUS + distance * 0.28);
+
+      const curve = new THREE.QuadraticBezierCurve3(p1, mid, p2);
+      const points = curve.getPoints(50);
+      const geometry = new THREE.BufferGeometry().setFromPoints(points);
+
+      const material = new THREE.LineBasicMaterial({
+        color: colorHex,
+        linewidth: 2,
+        transparent: true,
+        opacity: 0.85
+      });
+
+      const line = new THREE.Line(geometry, material);
+      globeGroup.add(line);
+
+      return { curve, p1, p2 };
+    }
+
+    // Route 1: USA -> COL
+    const routeAA = createCurvedRoute(CITY_COORDS.USA, CITY_COORDS.COL, 0xf5c518);
+    // Route 2: JPN -> DEU
+    const routeMU = createCurvedRoute(CITY_COORDS.JPN, CITY_COORDS.DEU, 0x3b82f6);
+    // Route 3: CHN -> KOR
+    const routeJL = createCurvedRoute(CITY_COORDS.CHN, CITY_COORDS.KOR, 0xf5c518);
+
+    // --- DOM OVERLAY POSITIONING (BILLBOARD HUD TAGS) ---
+    const labelElements = {
+      usa: { el: document.getElementById('tag-usa'), pos: latLonToVector3(CITY_COORDS.USA.lat, CITY_COORDS.USA.lon) },
+      col: { el: document.getElementById('tag-col'), pos: latLonToVector3(CITY_COORDS.COL.lat, CITY_COORDS.COL.lon) },
+      badgeAA: { el: document.getElementById('badge-aa'), curve: routeAA.curve, progress: 0.45 },
+      planeAA: { el: document.getElementById('plane-aa'), curve: routeAA.curve, progress: 0.45 },
+      badgeJL: { el: document.getElementById('badge-jl'), pos: latLonToVector3(CITY_COORDS.CHN.lat + 5, CITY_COORDS.CHN.lon + 10) },
+      badgeMU: { el: document.getElementById('badge-mu'), pos: latLonToVector3(CITY_COORDS.JPN.lat - 10, CITY_COORDS.JPN.lon - 15) }
+    };
+
+    const tempV = new THREE.Vector3();
+    function updateOverlayLabels() {
+      // Animate progress of flight AA-845 along curve
+      labelElements.badgeAA.progress = (labelElements.badgeAA.progress + 0.0008) % 1.0;
+      labelElements.planeAA.progress = labelElements.badgeAA.progress;
+
+      Object.keys(labelElements).forEach(key => {
+        const item = labelElements[key];
+        let worldPos;
+
+        if (item.curve) {
+          worldPos = item.curve.getPoint(item.progress);
+        } else {
+          worldPos = item.pos;
+        }
+
+        tempV.copy(worldPos);
+        tempV.applyMatrix4(globeGroup.matrixWorld);
+
+        // Check if label is on the visible front side of the planet
+        const cameraDistance = camera.position.distanceTo(tempV);
+        const globeCenterDistance = camera.position.distanceTo(globeGroup.position);
+        
+        // Raycast / dot product check for occlusion
+        const normal = tempV.clone().sub(globeGroup.position).normalize();
+        const eyeVector = camera.position.clone().sub(tempV).normalize();
+        const dot = normal.dot(eyeVector);
+
+        if (dot < 0.05 || cameraDistance > globeCenterDistance + GLOBE_RADIUS) {
+          item.el.style.opacity = '0';
+          item.el.style.pointerEvents = 'none';
+        } else {
+          tempV.project(camera);
+          const x = (tempV.x * 0.5 + 0.5) * window.innerWidth;
+          const y = (-(tempV.y * 0.5) + 0.5) * window.innerHeight;
+          
+          item.el.style.left = `${x}px`;
+          item.el.style.top = `${y}px`;
+          item.el.style.opacity = '1';
+        }
+      });
+    }
+
+    // --- INTERACTION & EVENT LISTENERS ---
+    // LAT/LON Real-time HUD update
+    const coordsText = document.getElementById('coords-text');
+    controls.addEventListener('change', () => {
+      const rotY = (globeGroup.rotation.y * 180 / Math.PI) % 360;
+      const rotX = (globeGroup.rotation.x * 180 / Math.PI) % 360;
+      const lat = (30.2974 + rotX * 0.1).toFixed(6);
+      const lon = (-102.1165 + rotY * 0.1).toFixed(6);
+      coordsText.innerHTML = `X: ${lat}<br>Y: ${lon}`;
+    });
+
+    // Activities Drawer Toggle
+    const activitiesBtn = document.getElementById('activities-btn');
+    const activitiesDrawer = document.getElementById('activities-drawer');
+    const drawerArrow = document.getElementById('drawer-arrow');
+
+    activitiesBtn.addEventListener('click', () => {
+      activitiesDrawer.classList.toggle('open');
+      const isOpen = activitiesDrawer.classList.contains('open');
+      drawerArrow.style.transform = isOpen ? 'rotate(180deg)' : 'rotate(0deg)';
+    });
+
+    // 2D / 3D Mode Toggle Simulation
+    const btn3D = document.getElementById('btn-3d');
+    const btn2D = document.getElementById('btn-2d');
+
+    btn2D.addEventListener('click', () => {
+      btn2D.classList.add('active');
+      btn3D.classList.remove('active');
+      // Smoothly rotate camera to flat front projection view
+      controls.reset();
+      camera.position.set(0, 0, 520);
+    });
+
+    btn3D.addEventListener('click', () => {
+      btn3D.classList.add('active');
+      btn2D.classList.remove('active');
+      camera.position.set(0, 80, 580);
+    });
+
+    // Zoom Buttons
+    document.getElementById('zoom-in').addEventListener('click', () => {
+      camera.position.multiplyScalar(0.88);
+    });
+    document.getElementById('zoom-out').addEventListener('click', () => {
+      camera.position.multiplyScalar(1.12);
+    });
+
+    // Fullscreen Toggle
+    document.getElementById('btn-fullscreen').addEventListener('click', () => {
+      if (!document.fullscreenElement) {
+        document.documentElement.requestFullscreen();
+      } else {
+        document.exitFullscreen();
+      }
+    });
+
+    // Responsive Window Resize
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      composer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    // --- ANIMATION LOOP ---
+    let clock = new THREE.Clock();
+
+    function animate() {
+      requestAnimationFrame(animate);
+
+      const delta = clock.getDelta();
+
+      // Earth & Clouds Idle Rotation
+      globeGroup.rotation.y += 0.05 * delta;
+      cloudsMesh.rotation.y += 0.07 * delta;
+
+      controls.update();
+      updateOverlayLabels();
+      composer.render();
+    }
+
+    // Camera Opening Fly-in Animation
+    camera.position.set(0, 300, 1200);
+    let flyInProgress = 0;
+    function flyIn() {
+      flyInProgress += 0.02;
+      camera.position.lerp(new THREE.Vector3(0, 80, 580), 0.05);
+      if (flyInProgress < 1.0) {
+        requestAnimationFrame(flyIn);
+      }
+    }
+    flyIn();
+
+    animate();
+  </script>
+</body>
+</html>

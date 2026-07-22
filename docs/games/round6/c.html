@@ -1,0 +1,840 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ORBITA — Global Logistics Intelligence</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --accent:#F5C518;
+    --blue:#2B5CF0;
+    --green:#34d17a;
+    --text-hi:#f4f7fb;
+    --text-mid:rgba(244,247,251,.72);
+    --text-low:rgba(244,247,251,.45);
+    --glass-bg:rgba(255,255,255,.09);
+    --glass-border:1px solid rgba(255,255,255,.15);
+    --glass-shadow:0 8px 24px rgba(0,0,0,.35);
+    --blur:blur(14px);
+  }
+  *{margin:0;padding:0;box-sizing:border-box;-webkit-font-smoothing:antialiased}
+  html,body{height:100%;overflow:hidden}
+  body{
+    font-family:'Inter','Space Grotesk',-apple-system,BlinkMacSystemFont,sans-serif;
+    background:radial-gradient(ellipse at 50% 42%, #0a1128 0%, #071022 42%, #030711 74%, #020508 100%);
+    color:var(--text-hi);
+    user-select:none;
+  }
+  /* vignette */
+  #vignette{position:fixed;inset:0;pointer-events:none;z-index:3;
+    background:radial-gradient(ellipse at 50% 50%, transparent 55%, rgba(0,0,0,.28) 100%);}
+  canvas#gl{position:fixed;inset:0;display:block;z-index:1;cursor:grab}
+  canvas#gl.dragging{cursor:grabbing}
+  #labels{position:fixed;inset:0;z-index:2;pointer-events:none;overflow:hidden}
+  .anchor{position:absolute;left:0;top:0;transform:translate(-50%,-50%);transition:opacity .25s ease;will-change:transform}
+  .city-label{
+    pointer-events:auto;cursor:pointer;
+    background:rgba(248,250,253,.94);color:#0a1128;
+    font-weight:700;font-size:11px;letter-spacing:.06em;
+    padding:4px 12px;border-radius:999px;
+    border:1px solid rgba(255,255,255,.6);
+    box-shadow:0 8px 24px rgba(0,0,0,.35);
+    transition:transform .18s ease, box-shadow .18s ease;
+  }
+  .city-label:hover{transform:scale(1.12);box-shadow:0 8px 24px rgba(245,197,24,.35)}
+  .flight-badge{
+    pointer-events:auto;cursor:pointer;
+    background:rgba(10,17,40,.82);color:var(--text-hi);
+    backdrop-filter:var(--blur);-webkit-backdrop-filter:var(--blur);
+    font-weight:600;font-size:10px;letter-spacing:.1em;
+    padding:4px 10px;border-radius:8px;
+    border:1px solid rgba(255,255,255,.15);
+    box-shadow:0 8px 24px rgba(0,0,0,.35);
+    transition:transform .18s ease,border-color .18s ease;
+  }
+  .flight-badge:hover{transform:scale(1.12);border-color:var(--accent)}
+  .plane-marker{
+    pointer-events:auto;cursor:pointer;
+    width:26px;height:26px;border-radius:999px;
+    background:var(--accent);
+    display:flex;align-items:center;justify-content:center;
+    box-shadow:0 0 16px rgba(245,197,24,.55),0 8px 24px rgba(0,0,0,.35);
+    transition:transform .18s ease;
+  }
+  .plane-marker:hover{transform:scale(1.2)}
+  .plane-marker svg{width:14px;height:14px;fill:#0a1128}
+  .end-dot{width:8px;height:8px;border-radius:999px;background:var(--accent);
+    box-shadow:0 0 10px rgba(245,197,24,.7)}
+
+  /* ===== HUD LAYER ===== */
+  #hud{position:fixed;inset:0;z-index:4;pointer-events:none}
+  #hud .clickable{pointer-events:auto}
+
+  /* header */
+  header{position:absolute;top:24px;left:32px;right:32px;display:flex;align-items:flex-start;justify-content:space-between}
+  .brand{display:flex;align-items:center;gap:12px}
+  .brand-icon{width:40px;height:40px;border-radius:12px;
+    background:var(--glass-bg);backdrop-filter:var(--blur);-webkit-backdrop-filter:var(--blur);
+    border:var(--glass-border);box-shadow:var(--glass-shadow);
+    display:flex;align-items:center;justify-content:center}
+  .brand-icon svg{width:20px;height:20px;stroke:var(--accent);fill:none;stroke-width:1.6}
+  .brand-name{font-family:'Space Grotesk',Inter,sans-serif;font-weight:700;font-size:15px;letter-spacing:-0.02em}
+  .brand-sub{font-size:10px;font-weight:500;color:var(--text-low);letter-spacing:.14em;margin-top:2px}
+  .title-block{text-align:center;flex:1}
+  .title-block h1{font-family:'Space Grotesk',Inter,sans-serif;font-weight:700;font-size:44px;letter-spacing:-0.02em;line-height:1;
+    background:linear-gradient(180deg,#fff 30%,rgba(255,255,255,.65));-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+  .status-row{display:flex;align-items:center;justify-content:center;gap:8px;margin-top:12px}
+  .pulse{width:8px;height:8px;border-radius:999px;background:var(--green);position:relative}
+  .pulse::after{content:'';position:absolute;inset:-4px;border-radius:999px;background:var(--green);opacity:.4;animation:breath 1.8s ease-out infinite}
+  @keyframes breath{0%{transform:scale(.4);opacity:.6}100%{transform:scale(1.5);opacity:0}}
+  .status-row .lt{font-size:11px;font-weight:600;letter-spacing:.22em;color:var(--text-mid)}
+  .status-row .ms{font-size:11px;font-weight:500;color:var(--text-low);font-variant-numeric:tabular-nums;width:52px;text-align:left}
+  .user-zone{display:flex;align-items:center;gap:12px}
+  .user-chip{display:flex;align-items:center;gap:8px;padding:6px 12px 6px 6px;border-radius:999px;
+    background:var(--glass-bg);backdrop-filter:var(--blur);-webkit-backdrop-filter:var(--blur);
+    border:var(--glass-border);box-shadow:var(--glass-shadow);cursor:pointer;transition:background .2s}
+  .user-chip:hover{background:rgba(255,255,255,.14)}
+  .avatar{width:30px;height:30px;border-radius:999px;
+    background:conic-gradient(from 210deg,#2B5CF0,#7aa0ff,#F5C518,#2B5CF0);
+    display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:#0a1128}
+  .avatar span{background:rgba(255,255,255,.85);width:26px;height:26px;border-radius:999px;display:flex;align-items:center;justify-content:center}
+  .user-chip .name{font-size:12px;font-weight:600}
+  .chev{width:10px;height:10px;stroke:var(--text-mid);fill:none;stroke-width:2}
+  .bell-btn{width:42px;height:42px;border-radius:999px;position:relative;cursor:pointer;
+    background:var(--glass-bg);backdrop-filter:var(--blur);-webkit-backdrop-filter:var(--blur);
+    border:var(--glass-border);box-shadow:var(--glass-shadow);
+    display:flex;align-items:center;justify-content:center;transition:background .2s}
+  .bell-btn:hover{background:rgba(255,255,255,.14)}
+  .bell-btn svg{width:17px;height:17px;stroke:var(--text-hi);fill:none;stroke-width:1.6}
+  .bell-btn .dot{position:absolute;top:10px;right:11px;width:7px;height:7px;border-radius:999px;background:#ff4d4d;border:1.5px solid #0a1128}
+
+  /* left nav */
+  nav{position:absolute;left:32px;top:50%;transform:translateY(-50%);
+    display:flex;flex-direction:column;gap:8px;padding:12px 8px;border-radius:999px;
+    background:var(--glass-bg);backdrop-filter:var(--blur);-webkit-backdrop-filter:var(--blur);
+    border:var(--glass-border);box-shadow:var(--glass-shadow)}
+  .nav-btn{width:40px;height:40px;border-radius:999px;display:flex;align-items:center;justify-content:center;
+    cursor:pointer;position:relative;transition:background .2s;background:transparent;border:none}
+  .nav-btn svg{width:18px;height:18px;stroke:var(--text-low);fill:none;stroke-width:1.6;transition:stroke .2s}
+  .nav-btn:hover svg{stroke:var(--text-hi)}
+  .nav-btn.active{background:var(--accent);box-shadow:0 4px 16px rgba(245,197,24,.4)}
+  .nav-btn.active svg{stroke:#0a1128}
+  .nav-btn .ndot{position:absolute;top:8px;right:8px;width:6px;height:6px;border-radius:999px;background:var(--accent);border:1.5px solid #0a1128}
+
+  /* left copy */
+  .copy{position:absolute;left:120px;top:50%;transform:translateY(-56%);max-width:380px}
+  .tag-pill{display:inline-flex;align-items:center;gap:8px;padding:6px 14px;border-radius:999px;
+    background:var(--glass-bg);backdrop-filter:var(--blur);-webkit-backdrop-filter:var(--blur);
+    border:var(--glass-border);box-shadow:var(--glass-shadow);
+    font-size:11px;font-weight:600;letter-spacing:.12em;color:var(--text-mid)}
+  .tag-pill i{width:6px;height:6px;border-radius:999px;background:var(--accent);display:block}
+  .copy h2{font-family:'Space Grotesk',Inter,sans-serif;font-weight:700;font-size:46px;line-height:1.08;letter-spacing:-0.02em;margin-top:24px}
+  .copy h2 em{font-style:normal;color:var(--accent)}
+  .copy a{pointer-events:auto;display:inline-block;margin-top:32px;color:var(--accent);text-decoration:none;
+    font-size:12px;font-weight:700;letter-spacing:.2em;padding-bottom:6px;border-bottom:1.5px solid var(--accent);
+    transition:letter-spacing .25s}
+  .copy a:hover{letter-spacing:.28em}
+
+  /* stats */
+  .stats-card{position:absolute;right:32px;top:50%;transform:translateY(-50%);width:248px;
+    padding:24px;border-radius:16px;
+    background:var(--glass-bg);backdrop-filter:var(--blur);-webkit-backdrop-filter:var(--blur);
+    border:var(--glass-border);box-shadow:var(--glass-shadow)}
+  .stats-card h3{font-family:'Space Grotesk',Inter,sans-serif;font-weight:700;font-size:20px;letter-spacing:-0.02em;line-height:1.15}
+  .stat-group{margin-top:24px}
+  .stat-group .lbl{font-size:11px;font-weight:500;color:var(--text-low);letter-spacing:.08em}
+  .stat-row{display:flex;align-items:baseline;gap:8px;margin-top:8px}
+  .stat-row .num{font-family:'Space Grotesk',Inter,sans-serif;font-weight:700;font-size:34px;letter-spacing:-0.02em;font-variant-numeric:tabular-nums}
+  .up-badge{display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:999px;
+    background:rgba(52,209,122,.14);border:1px solid rgba(52,209,122,.3);
+    font-size:11px;font-weight:700;color:var(--green)}
+  .up-badge svg{width:10px;height:10px;stroke:var(--green);fill:none;stroke-width:2}
+  .spark{margin-top:8px;display:block}
+  .divider{height:1px;background:rgba(255,255,255,.1);margin-top:24px}
+
+  /* bottom center controls */
+  .bottom-center{position:absolute;left:50%;bottom:24px;transform:translateX(-50%);
+    display:flex;flex-direction:column;align-items:center;gap:12px}
+  .mode-toggle{display:flex;gap:4px;padding:4px;border-radius:999px;
+    background:var(--glass-bg);backdrop-filter:var(--blur);-webkit-backdrop-filter:var(--blur);
+    border:var(--glass-border);box-shadow:var(--glass-shadow)}
+  .mode-btn{border:none;cursor:pointer;padding:8px 24px;border-radius:999px;background:transparent;
+    color:var(--text-mid);font-family:inherit;font-size:12px;font-weight:700;letter-spacing:.06em;transition:all .25s}
+  .mode-btn.active{background:var(--accent);color:#0a1128;box-shadow:0 4px 16px rgba(245,197,24,.4)}
+  .act-btn{display:flex;align-items:center;gap:8px;border:var(--glass-border);cursor:pointer;
+    padding:8px 20px;border-radius:999px;background:var(--glass-bg);
+    backdrop-filter:var(--blur);-webkit-backdrop-filter:var(--blur);box-shadow:var(--glass-shadow);
+    color:var(--text-hi);font-family:inherit;font-size:11px;font-weight:700;letter-spacing:.18em;transition:background .2s}
+  .act-btn:hover{background:rgba(255,255,255,.14)}
+  .act-btn svg{width:12px;height:12px;stroke:var(--accent);fill:none;stroke-width:2.2;transition:transform .4s}
+  .act-btn.open svg{transform:rotate(180deg)}
+
+  /* zoom */
+  .zoom-zone{position:absolute;right:32px;bottom:24px;display:flex;align-items:center;gap:12px}
+  .zoom-zone .zl{font-size:11px;font-weight:600;letter-spacing:.16em;color:var(--text-low)}
+  .round-btn{width:40px;height:40px;border-radius:999px;cursor:pointer;
+    background:var(--glass-bg);backdrop-filter:var(--blur);-webkit-backdrop-filter:var(--blur);
+    border:var(--glass-border);box-shadow:var(--glass-shadow);
+    display:flex;align-items:center;justify-content:center;transition:background .2s}
+  .round-btn:hover{background:rgba(255,255,255,.16)}
+  .round-btn svg{width:14px;height:14px;stroke:var(--text-hi);fill:none;stroke-width:2}
+
+  /* coords */
+  .coords{position:absolute;left:32px;bottom:24px;display:flex;gap:16px;padding:10px 16px;border-radius:12px;
+    background:var(--glass-bg);backdrop-filter:var(--blur);-webkit-backdrop-filter:var(--blur);
+    border:var(--glass-border);box-shadow:var(--glass-shadow);
+    font-size:11px;font-weight:600;font-variant-numeric:tabular-nums}
+  .coords b{color:var(--text-low);font-weight:600;letter-spacing:.1em;margin-right:4px}
+
+  /* activities panel */
+  .panel{position:fixed;left:50%;bottom:0;transform:translate(-50%,112%);z-index:5;
+    width:min(1060px,calc(100vw - 64px));margin-bottom:88px;
+    display:flex;gap:0;border-radius:16px;overflow:hidden;
+    border:1px solid rgba(255,255,255,.15);box-shadow:0 24px 64px rgba(0,0,0,.55);
+    transition:transform .55s cubic-bezier(.22,1,.3,1);pointer-events:auto}
+  .panel.open{transform:translate(-50%,0)}
+  .panel-left{flex:1.6;background:rgba(13,20,44,.86);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);padding:24px}
+  .panel-left h3{font-family:'Space Grotesk',Inter,sans-serif;font-weight:700;font-size:20px;letter-spacing:-0.02em}
+  table{width:100%;border-collapse:collapse;margin-top:16px}
+  th{font-size:10px;font-weight:600;letter-spacing:.14em;color:var(--text-low);text-align:left;padding:8px 8px}
+  td{padding:12px 8px;font-size:12px;font-weight:600;border-top:1px solid rgba(255,255,255,.07);vertical-align:middle}
+  .cargo-id{display:flex;align-items:center;gap:8px}
+  .cargo-id .ic{width:28px;height:28px;border-radius:8px;background:rgba(255,255,255,.08);
+    border:1px solid rgba(255,255,255,.12);display:flex;align-items:center;justify-content:center}
+  .cargo-id svg{width:13px;height:13px;stroke:var(--accent);fill:none;stroke-width:1.7}
+  .prog{display:flex;align-items:center;gap:4px;min-width:120px}
+  .prog .solid{height:3px;border-radius:999px;background:var(--accent)}
+  .prog .dash{height:0;flex:1;border-top:2px dashed rgba(255,255,255,.25)}
+  .prog .node{width:6px;height:6px;border-radius:999px;background:var(--accent)}
+  .prog .node.hollow{background:transparent;border:1.5px solid rgba(255,255,255,.4)}
+  .badge{display:inline-block;padding:4px 12px;border-radius:999px;font-size:10px;font-weight:700;letter-spacing:.06em}
+  .badge.pending{background:rgba(43,92,240,.18);color:#8fb0ff;border:1px solid rgba(43,92,240,.45)}
+  .badge.arrived{background:rgba(245,197,24,.14);color:var(--accent);border:1px solid rgba(245,197,24,.4)}
+  .panel-right{flex:1;background:linear-gradient(160deg,#3568ff,#2247c8);padding:24px;display:flex;flex-direction:column;justify-content:space-between}
+  .pr-top{display:flex;justify-content:space-between;align-items:flex-start;gap:16px}
+  .panel-right h4{font-family:'Space Grotesk',Inter,sans-serif;font-weight:700;font-size:17px;letter-spacing:-0.01em;line-height:1.25}
+  .details-pill{background:var(--accent);color:#0a1128;border:none;cursor:pointer;font-family:inherit;
+    padding:6px 14px;border-radius:999px;font-size:10px;font-weight:800;letter-spacing:.1em;white-space:nowrap}
+  .big-pct{font-family:'Space Grotesk',Inter,sans-serif;font-weight:700;font-size:56px;letter-spacing:-0.02em;line-height:1;margin-top:16px}
+  .pr-note{font-size:12px;font-weight:500;color:rgba(255,255,255,.75);margin-top:8px;max-width:180px;line-height:1.5}
+  .pr-bottom{display:flex;align-items:center;gap:12px;margin-top:24px}
+  .sun-ic{width:40px;height:40px;border-radius:999px;background:rgba(255,255,255,.14);
+    display:flex;align-items:center;justify-content:center}
+  .sun-ic svg{width:20px;height:20px;stroke:var(--accent);fill:none;stroke-width:1.8}
+  .pr-bottom span{font-size:12px;font-weight:700;letter-spacing:.08em}
+
+  #loadnote{position:fixed;left:50%;top:70%;transform:translateX(-50%);z-index:6;font-size:11px;
+    letter-spacing:.2em;color:var(--text-low);transition:opacity .8s;pointer-events:none}
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+}}
+</script>
+</head>
+<body>
+<canvas id="gl"></canvas>
+<div id="labels"></div>
+<div id="vignette"></div>
+<div id="loadnote">INITIALIZING ORBITAL VIEW…</div>
+
+<div id="hud">
+  <header>
+    <div class="brand">
+      <div class="brand-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3.5 3 14.5 0 18M12 3c-3 3.5-3 14.5 0 18"/></svg></div>
+      <div>
+        <div class="brand-name">ORBITA</div>
+        <div class="brand-sub">LOGISTICS AI</div>
+      </div>
+    </div>
+    <div class="title-block">
+      <h1>Global View</h1>
+      <div class="status-row">
+        <span class="pulse"></span>
+        <span class="lt">LIVE TRACKING</span>
+        <span class="ms" id="latency">42 ms</span>
+      </div>
+    </div>
+    <div class="user-zone">
+      <div class="user-chip clickable">
+        <div class="avatar"><span>AK</span></div>
+        <span class="name">A. Kessler</span>
+        <svg class="chev" viewBox="0 0 12 12"><path d="M2 4l4 4 4-4"/></svg>
+      </div>
+      <div class="bell-btn clickable">
+        <svg viewBox="0 0 24 24"><path d="M18 9a6 6 0 10-12 0c0 6-2.5 7-2.5 7h17S18 15 18 9zM10 19.5a2.2 2.2 0 004 0"/></svg>
+        <span class="dot"></span>
+      </div>
+    </div>
+  </header>
+
+  <nav class="clickable">
+    <button class="nav-btn active" title="Globe"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3.5 3 14.5 0 18M12 3c-3 3.5-3 14.5 0 18"/></svg></button>
+    <button class="nav-btn" title="Shipments"><svg viewBox="0 0 24 24"><path d="M12 2l9 5v10l-9 5-9-5V7l9-5zM3 7l9 5 9-5M12 12v10"/></svg><span class="ndot"></span></button>
+    <button class="nav-btn" title="Routes"><svg viewBox="0 0 24 24"><circle cx="5" cy="19" r="2.5"/><circle cx="19" cy="5" r="2.5"/><path d="M7 17.5C11 14 13 10 17 7"/></svg></button>
+    <button class="nav-btn" title="Analytics"><svg viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg></button>
+    <button class="nav-btn" title="Fleet"><svg viewBox="0 0 24 24"><path d="M21 15l-8.5-3.5L10 3 8 4l1.5 8.5L4 15l-2-1-1 2 4 2 2 4 2-1-1-2 2.5-5.5L19 17l2-2z"/></svg></button>
+    <button class="nav-btn" title="Settings"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 00-.2-1.6l2-1.5-2-3.4-2.3 1a7 7 0 00-2.8-1.6L13.2 2h-2.4l-.5 2.9a7 7 0 00-2.8 1.6l-2.3-1-2 3.4 2 1.5A7 7 0 005 12c0 .5.1 1.1.2 1.6l-2 1.5 2 3.4 2.3-1a7 7 0 002.8 1.6l.5 2.9h2.4l.5-2.9a7 7 0 002.8-1.6l2.3 1 2-3.4-2-1.5c.1-.5.2-1.1.2-1.6z"/></svg></button>
+  </nav>
+
+  <div class="copy">
+    <span class="tag-pill"><i></i>AI-POWERED ROUTING</span>
+    <h2>Plan Your Route<br>with <em>AI</em>, Now.</h2>
+    <a href="#" onclick="return false">HOW IT WORKS</a>
+  </div>
+
+  <aside class="stats-card">
+    <h3>Main<br>Statistics</h3>
+    <div class="stat-group">
+      <div class="lbl">Shipments in transit</div>
+      <div class="stat-row">
+        <span class="num">24,506</span>
+        <span class="up-badge"><svg viewBox="0 0 12 12"><path d="M2 9l4-5 4 5M6 4v0"/></svg>4.8%</span>
+      </div>
+      <svg class="spark" width="200" height="34" viewBox="0 0 200 34">
+        <polyline points="0,26 22,22 44,25 66,17 88,20 110,12 132,15 154,8 176,11 200,4"
+          fill="none" stroke="rgba(245,197,24,.85)" stroke-width="1.6" stroke-linecap="round"/>
+        <circle cx="200" cy="4" r="2.4" fill="#F5C518"/>
+      </svg>
+    </div>
+    <div class="divider"></div>
+    <div class="stat-group">
+      <div class="lbl">On-time delivery</div>
+      <div class="stat-row">
+        <span class="num">1,982</span>
+        <span class="up-badge"><svg viewBox="0 0 12 12"><path d="M2 9l4-5 4 5M6 4v0"/></svg>2.1%</span>
+      </div>
+      <svg class="spark" width="200" height="34" viewBox="0 0 200 34">
+        <polyline points="0,22 22,26 44,18 66,22 88,14 110,18 132,10 154,14 176,7 200,9"
+          fill="none" stroke="rgba(255,255,255,.55)" stroke-width="1.6" stroke-linecap="round"/>
+        <circle cx="200" cy="9" r="2.4" fill="rgba(255,255,255,.8)"/>
+      </svg>
+    </div>
+  </aside>
+
+  <div class="bottom-center clickable">
+    <div class="mode-toggle">
+      <button class="mode-btn active" id="btn3d">3D&nbsp;GLOBE</button>
+      <button class="mode-btn" id="btn2d">2D&nbsp;MAP</button>
+    </div>
+    <button class="act-btn" id="actBtn">ACTIVITIES
+      <svg viewBox="0 0 12 12"><path d="M2 8l4-4 4 4"/></svg>
+    </button>
+  </div>
+
+  <div class="zoom-zone clickable">
+    <span class="zl">ZOOM</span>
+    <button class="round-btn" id="zin"><svg viewBox="0 0 14 14"><path d="M7 2v10M2 7h10"/></svg></button>
+    <button class="round-btn" id="zout"><svg viewBox="0 0 14 14"><path d="M2 7h10"/></svg></button>
+    <button class="round-btn" id="fs"><svg viewBox="0 0 14 14"><path d="M2 5V2h3M9 2h3v3M12 9v3H9M5 12H2V9"/></svg></button>
+  </div>
+
+  <div class="coords">
+    <span><b>LAT</b><span id="lat">0.00°</span></span>
+    <span><b>LON</b><span id="lon">0.00°</span></span>
+  </div>
+</div>
+
+<section class="panel" id="panel">
+  <div class="panel-left">
+    <h3>Activities</h3>
+    <table>
+      <thead><tr><th>CARGO ID</th><th>DESTINATION</th><th>PROGRESS</th><th>ARRIVAL</th><th>STATUS</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><span class="cargo-id"><span class="ic"><svg viewBox="0 0 24 24"><path d="M21 15l-8.5-3.5L10 3 8 4l1.5 8.5L4 15l-2-1-1 2 4 2 2 4 2-1-1-2 2.5-5.5L19 17l2-2z"/></svg></span>AA-845</span></td>
+          <td>New York → London</td>
+          <td><span class="prog"><span class="node"></span><span class="solid" style="width:56px"></span><span class="dash"></span><span class="node hollow"></span></span></td>
+          <td>Jun 05, 2025</td>
+          <td><span class="badge pending">Pending</span></td>
+        </tr>
+        <tr>
+          <td><span class="cargo-id"><span class="ic"><svg viewBox="0 0 24 24"><path d="M12 2l9 5v10l-9 5-9-5V7l9-5zM3 7l9 5 9-5M12 12v10"/></svg></span>JL-748</span></td>
+          <td>Los Angeles → Tokyo</td>
+          <td><span class="prog"><span class="node"></span><span class="solid" style="width:34px"></span><span class="dash"></span><span class="node hollow"></span></span></td>
+          <td>Jun 08, 2025</td>
+          <td><span class="badge pending">Pending</span></td>
+        </tr>
+        <tr>
+          <td><span class="cargo-id"><span class="ic"><svg viewBox="0 0 24 24"><path d="M21 15l-8.5-3.5L10 3 8 4l1.5 8.5L4 15l-2-1-1 2 4 2 2 4 2-1-1-2 2.5-5.5L19 17l2-2z"/></svg></span>MU-131</span></td>
+          <td>Singapore → Dubai</td>
+          <td><span class="prog"><span class="node"></span><span class="solid" style="width:96px"></span><span class="node"></span></span></td>
+          <td>May 29, 2025</td>
+          <td><span class="badge arrived">Arrived</span></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="panel-right">
+    <div class="pr-top">
+      <h4>Risk of<br>Cargo Loss</h4>
+      <button class="details-pill">DETAILS</button>
+    </div>
+    <div>
+      <div class="big-pct">10%</div>
+      <div class="pr-note">Minimal risk expected due to stable weather along corridors.</div>
+    </div>
+    <div class="pr-bottom">
+      <span class="sun-ic"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M19.1 4.9l-1.8 1.8M6.7 17.3l-1.8 1.8"/></svg></span>
+      <span>CLEAR&nbsp;SKIES&nbsp;·&nbsp;24°C</span>
+    </div>
+  </div>
+</section>
+
+<script type="module">
+import * as THREE from 'three';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+
+const R = 2;
+const canvas = document.getElementById('gl');
+const renderer = new THREE.WebGLRenderer({canvas, antialias:true, alpha:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 0.95;
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(38, innerWidth/innerHeight, 0.1, 100);
+camera.position.set(0, 0.3, 18);
+
+const sunDir = new THREE.Vector3(-1.4, 0.35, 0.9).normalize();
+const sun = new THREE.DirectionalLight(0xffffff, 1.1);
+sun.position.copy(sunDir).multiplyScalar(10);
+scene.add(sun);
+scene.add(new THREE.AmbientLight(0x334466, 0.35));
+
+/* ---------- stars ---------- */
+{
+  const g = new THREE.BufferGeometry();
+  const n = 700, pos = new Float32Array(n*3);
+  for(let i=0;i<n;i++){
+    const v = new THREE.Vector3().randomDirection().multiplyScalar(40 + Math.random()*20);
+    pos.set([v.x,v.y,v.z], i*3);
+  }
+  g.setAttribute('position', new THREE.BufferAttribute(pos,3));
+  scene.add(new THREE.Points(g, new THREE.PointsMaterial({color:0x9fb4dd, size:0.06, transparent:true, opacity:0.55, sizeAttenuation:true})));
+}
+
+/* ---------- texture loading with fallback ---------- */
+function fallbackEarth(){
+  const c = document.createElement('canvas'); c.width=1024; c.height=512;
+  const x = c.getContext('2d');
+  const grd = x.createLinearGradient(0,0,0,512);
+  grd.addColorStop(0,'#0e2a52'); grd.addColorStop(.5,'#123a6e'); grd.addColorStop(1,'#0e2a52');
+  x.fillStyle = grd; x.fillRect(0,0,1024,512);
+  x.fillStyle = '#2d5a3a';
+  let s = 7;
+  const rnd = ()=>{ s = (s*16807)%2147483647; return s/2147483647; };
+  for(let i=0;i<90;i++){
+    x.beginPath();
+    const cx = rnd()*1024, cy = 80+rnd()*350, r0 = 12+rnd()*55;
+    x.ellipse(cx, cy, r0, r0*(.4+rnd()*.7), rnd()*3, 0, 7); x.fill();
+  }
+  x.fillStyle = '#e8eef5';
+  x.fillRect(0,0,1024,26); x.fillRect(0,486,1024,26);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
+}
+function fallbackClouds(){
+  const c = document.createElement('canvas'); c.width=512; c.height=256;
+  const x = c.getContext('2d'); x.clearRect(0,0,512,256);
+  let s = 3; const rnd = ()=>{ s=(s*48271)%2147483647; return s/2147483647; };
+  for(let i=0;i<160;i++){
+    const g = x.createRadialGradient(0,0,0,0,0,10+rnd()*26);
+    g.addColorStop(0,'rgba(255,255,255,.5)'); g.addColorStop(1,'rgba(255,255,255,0)');
+    x.save(); x.translate(rnd()*512, rnd()*256); x.fillStyle = g;
+    x.fillRect(-40,-40,80,80); x.restore();
+  }
+  return new THREE.CanvasTexture(c);
+}
+const loadTex = (url, fb, srgb=true)=> new Promise(res=>{
+  new THREE.TextureLoader().load(url, t=>{ if(srgb) t.colorSpace = THREE.SRGBColorSpace; t.anisotropy=8; res(t); },
+    undefined, ()=>res(fb()));
+});
+const BASE = 'https://threejs.org/examples/textures/planets/';
+const [dayTex, cloudTex] = await Promise.all([
+  loadTex(BASE+'earth_atmos_2048.jpg', fallbackEarth),
+  loadTex(BASE+'earth_clouds_1024.png', fallbackClouds, false)
+]);
+
+/* ---------- globe ---------- */
+const globeGroup = new THREE.Group();
+scene.add(globeGroup);
+
+const earthMat = new THREE.ShaderMaterial({
+  uniforms:{ dayMap:{value:dayTex}, sunDir:{value:sunDir} },
+  vertexShader:`
+    varying vec2 vUv; varying vec3 vN; varying vec3 vW;
+    void main(){
+      vUv = uv;
+      vN = normalize(mat3(modelMatrix) * normal);
+      vec4 wp = modelMatrix * vec4(position,1.0);
+      vW = wp.xyz;
+      gl_Position = projectionMatrix * viewMatrix * wp;
+    }`,
+  fragmentShader:`
+    uniform sampler2D dayMap; uniform vec3 sunDir;
+    varying vec2 vUv; varying vec3 vN; varying vec3 vW;
+    void main(){
+      vec3 n = normalize(vN);
+      vec3 day = texture2D(dayMap, vUv).rgb;
+      float ndl = dot(n, sunDir);
+      float dayMix = smoothstep(-0.12, 0.22, ndl);
+      vec3 lit = day * (0.32 + 1.05 * max(ndl, 0.0));
+      vec3 night = day * 0.045 + vec3(0.010, 0.016, 0.035);
+      vec3 col = mix(night, lit, dayMix);
+      /* warm terminator band */
+      float term = smoothstep(-0.16, 0.02, ndl) * smoothstep(0.30, 0.02, ndl);
+      col += vec3(0.85, 0.38, 0.12) * term * 0.22;
+      /* subtle ocean sheen (kept restrained) */
+      vec3 viewDir = normalize(cameraPosition - vW);
+      vec3 h = normalize(sunDir + viewDir);
+      col += vec3(0.9,0.95,1.0) * pow(max(dot(n,h),0.0), 9.0) * 0.10 * dayMix;
+      /* fresnel blue rim on lit limb */
+      float fres = pow(1.0 - max(dot(n, viewDir), 0.0), 3.2);
+      col += vec3(0.28, 0.52, 0.95) * fres * (0.18 + 0.28*dayMix);
+      gl_FragColor = vec4(col, 1.0);
+    }`
+});
+const earth = new THREE.Mesh(new THREE.SphereGeometry(R, 96, 96), earthMat);
+globeGroup.add(earth);
+
+/* clouds */
+const clouds = new THREE.Mesh(
+  new THREE.SphereGeometry(R*1.017, 80, 80),
+  new THREE.MeshLambertMaterial({ map:cloudTex, transparent:true, opacity:0.55, depthWrite:false })
+);
+globeGroup.add(clouds);
+
+/* inner fresnel rim shell */
+const rim = new THREE.Mesh(
+  new THREE.SphereGeometry(R*1.010, 64, 64),
+  new THREE.ShaderMaterial({
+    transparent:true, blending:THREE.AdditiveBlending, depthWrite:false,
+    vertexShader:`varying vec3 vN; varying vec3 vW;
+      void main(){ vN = normalize(mat3(modelMatrix)*normal);
+        vec4 wp = modelMatrix*vec4(position,1.0); vW = wp.xyz;
+        gl_Position = projectionMatrix*viewMatrix*wp; }`,
+    fragmentShader:`varying vec3 vN; varying vec3 vW;
+      void main(){
+        vec3 v = normalize(cameraPosition - vW);
+        float f = pow(1.0 - max(dot(normalize(vN), v), 0.0), 3.7);
+        gl_FragColor = vec4(vec3(0.45,0.68,1.0)*f*0.68, f*0.72);
+      }`
+  })
+);
+scene.add(rim);
+
+/* outer atmosphere glow (backside) — width ~11% of radius */
+const atmo = new THREE.Mesh(
+  new THREE.SphereGeometry(R*1.095, 64, 64),
+  new THREE.ShaderMaterial({
+    side:THREE.BackSide, transparent:true, blending:THREE.AdditiveBlending, depthWrite:false,
+    vertexShader:`varying vec3 vN;
+      void main(){ vN = normalize(normalMatrix*normal);
+        gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
+    fragmentShader:`varying vec3 vN;
+      void main(){
+        float i = pow(clamp(0.63 - dot(normalize(vN), vec3(0.0,0.0,1.0)), 0.0, 1.4), 3.4);
+        gl_FragColor = vec4(vec3(0.33,0.58,1.0)*i*0.78, i*0.78);
+      }`
+  })
+);
+scene.add(atmo);
+
+/* ---------- flat map (2D mode) ---------- */
+const flatGroup = new THREE.Group();
+const flatPlane = new THREE.Mesh(
+  new THREE.PlaneGeometry(8.6, 4.3),
+  new THREE.MeshBasicMaterial({ map:dayTex, color:0xaebbd6 })
+);
+flatGroup.add(flatPlane);
+flatGroup.scale.setScalar(0.001);
+flatGroup.visible = false;
+scene.add(flatGroup);
+
+/* ---------- routes & markers ---------- */
+function latLonTo3D(lat, lon, r){
+  const phi = (90 - lat) * Math.PI/180;
+  const theta = (lon + 180) * Math.PI/180;
+  return new THREE.Vector3(
+    -r * Math.sin(phi) * Math.cos(theta),
+     r * Math.cos(phi),
+     r * Math.sin(phi) * Math.sin(theta)
+  );
+}
+function latLonTo2D(lat, lon){
+  return new THREE.Vector3(lon/180*4.3, lat/90*2.15, 0.02);
+}
+const cities = {
+  NYC:{lat:40.71, lon:-74.00, name:'NEW YORK'},
+  LON:{lat:51.51, lon:-0.13, name:'LONDON'},
+  LAX:{lat:34.05, lon:-118.24, name:'LOS ANGELES'},
+  TYO:{lat:35.68, lon:139.69, name:'TOKYO'},
+  SIN:{lat:1.35, lon:103.82, name:'SINGAPORE'},
+  DXB:{lat:25.20, lon:55.27, name:'DUBAI'}
+};
+const routes = [
+  {from:'NYC', to:'LON', id:'AA-845', speed:0.055, t:0.25},
+  {from:'LAX', to:'TYO', id:'JL-748', speed:0.042, t:0.6},
+  {from:'SIN', to:'DXB', id:'MU-131', speed:0.05, t:0.45}
+];
+function arcPoint(a, b, t){
+  const v = a.clone().lerp(b, t).normalize();
+  const ang = a.angleTo(b);
+  const lift = 1 + Math.sin(Math.PI*t) * (0.05 + ang*0.055);
+  return v.multiplyScalar(R * lift);
+}
+const routeMat = new THREE.LineBasicMaterial({ color:0xf5c518, transparent:true, opacity:0.9 });
+routes.forEach(rt=>{
+  const a = latLonTo3D(cities[rt.from].lat, cities[rt.from].lon, 1).normalize();
+  const b = latLonTo3D(cities[rt.to].lat, cities[rt.to].lon, 1).normalize();
+  rt.a = a; rt.b = b;
+  const pts3 = [];
+  for(let i=0;i<=100;i++) pts3.push(arcPoint(a, b, i/100));
+  const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts3), routeMat);
+  globeGroup.add(line);
+  /* 2D arc */
+  const p0 = latLonTo2D(cities[rt.from].lat, cities[rt.from].lon);
+  const p1 = latLonTo2D(cities[rt.to].lat, cities[rt.to].lon);
+  const mid = p0.clone().lerp(p1, .5); mid.y += 0.5;
+  const curve = new THREE.QuadraticBezierCurve3(p0, mid, p1);
+  rt.curve2d = curve;
+  flatGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(curve.getPoints(60)), routeMat));
+});
+
+/* ---------- HTML anchors ---------- */
+const labelsEl = document.getElementById('labels');
+const anchors = [];
+function addAnchor(html, getLocalPos){
+  const el = document.createElement('div');
+  el.className = 'anchor';
+  el.innerHTML = html;
+  labelsEl.appendChild(el);
+  anchors.push({el, getLocalPos});
+  return el;
+}
+const planeSVG = `<svg viewBox="0 0 24 24"><path d="M21.5 15.5l-9-3.7L10.8 3 8.6 4.1l1.6 8.9L4.4 15.6l-2.1-1L1 16.7l4.2 2.1 2.1 4.2 2.1-1.3-1-2.1 2.6-5.8 8.7 4.2 1.8-2.5z"/></svg>`;
+for(const key of ['NYC','LON','LAX','TYO','SIN','DXB']){
+  const c = cities[key];
+  addAnchor(`<span class="city-label">${c.name}</span>`,
+    mode => mode==='3d' ? latLonTo3D(c.lat, c.lon, R*1.01) : latLonTo2D(c.lat, c.lon));
+  addAnchor(`<span class="end-dot"></span>`,
+    mode => mode==='3d' ? latLonTo3D(c.lat, c.lon, R*1.002) : latLonTo2D(c.lat, c.lon));
+}
+routes.forEach(rt=>{
+  addAnchor(`<span class="plane-marker">${planeSVG}</span>`,
+    mode => mode==='3d' ? arcPoint(rt.a, rt.b, rt.t) : rt.curve2d.getPoint(rt.t));
+  addAnchor(`<span class="flight-badge">${rt.id}</span>`,
+    mode =>{
+      const p = mode==='3d' ? arcPoint(rt.a, rt.b, rt.t).multiplyScalar(1.06)
+                            : rt.curve2d.getPoint(rt.t).clone().add(new THREE.Vector3(0,0.22,0));
+      return p;
+    });
+});
+
+/* ---------- post processing ---------- */
+const composer = new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene, camera));
+const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.45, 0.55, 0.82);
+composer.addPass(bloom);
+
+/* ---------- interaction ---------- */
+let mode = '3d';
+let dragging = false, px = 0, py = 0;
+let velX = 0, velY = 0;
+let dist = 18, targetDist = 7.4;
+let panX = 0;
+const raycaster = new THREE.Raycaster();
+const mouseNDC = new THREE.Vector2();
+
+canvas.addEventListener('pointerdown', e=>{
+  dragging = true; px = e.clientX; py = e.clientY;
+  canvas.classList.add('dragging'); canvas.setPointerCapture(e.pointerId);
+});
+addEventListener('pointerup', ()=>{ dragging = false; canvas.classList.remove('dragging'); });
+addEventListener('pointermove', e=>{
+  mouseNDC.set(e.clientX/innerWidth*2-1, -(e.clientY/innerHeight)*2+1);
+  if(dragging){
+    const dx = e.clientX - px, dy = e.clientY - py;
+    px = e.clientX; py = e.clientY;
+    if(mode==='3d'){
+      velY = dx * 0.0032; velX = dy * 0.0022;
+      globeGroup.rotation.y += velY;
+      globeGroup.rotation.x = THREE.MathUtils.clamp(globeGroup.rotation.x + velX, -0.7, 0.7);
+    } else {
+      panX = THREE.MathUtils.clamp(panX + dx*0.006, -2.2, 2.2);
+    }
+  }
+  updateCoords();
+});
+addEventListener('wheel', e=>{
+  targetDist = THREE.MathUtils.clamp(targetDist + e.deltaY*0.0035, 4.6, 12.5);
+}, {passive:true});
+document.getElementById('zin').onclick = ()=> targetDist = Math.max(4.6, targetDist - 1);
+document.getElementById('zout').onclick = ()=> targetDist = Math.min(12.5, targetDist + 1);
+document.getElementById('fs').onclick = ()=>{
+  if(!document.fullscreenElement) document.documentElement.requestFullscreen();
+  else document.exitFullscreen();
+};
+
+/* mode toggle */
+const btn3d = document.getElementById('btn3d'), btn2d = document.getElementById('btn2d');
+let modeAnim = null;
+function setMode(m){
+  if(m === mode) return;
+  mode = m;
+  btn3d.classList.toggle('active', m==='3d');
+  btn2d.classList.toggle('active', m==='2d');
+  const showGlobe = (m==='3d');
+  const t0 = performance.now();
+  globeGroup.visible = rim.visible = atmo.visible = true;
+  flatGroup.visible = true;
+  modeAnim = (now)=>{
+    const k = Math.min((now-t0)/600, 1);
+    const e = k<.5 ? 2*k*k : 1-Math.pow(-2*k+2,2)/2;
+    const gs = showGlobe ? Math.max(e,0.001) : Math.max(1-e,0.001);
+    const fsc = showGlobe ? Math.max(1-e,0.001) : Math.max(e,0.001);
+    globeGroup.scale.setScalar(gs); rim.scale.setScalar(gs); atmo.scale.setScalar(gs);
+    flatGroup.scale.setScalar(fsc);
+    if(k>=1){
+      globeGroup.visible = rim.visible = atmo.visible = showGlobe;
+      flatGroup.visible = !showGlobe;
+      modeAnim = null;
+    }
+  };
+}
+btn3d.onclick = ()=> setMode('3d');
+btn2d.onclick = ()=> setMode('2d');
+
+/* activities panel */
+const panel = document.getElementById('panel'), actBtn = document.getElementById('actBtn');
+actBtn.onclick = ()=>{
+  panel.classList.toggle('open');
+  actBtn.classList.toggle('open');
+};
+
+/* nav selection */
+document.querySelectorAll('.nav-btn').forEach(b=>{
+  b.onclick = ()=>{
+    document.querySelectorAll('.nav-btn').forEach(x=>x.classList.remove('active'));
+    b.classList.add('active');
+  };
+});
+
+/* latency ticker */
+const latEl = document.getElementById('latency');
+setInterval(()=>{ latEl.textContent = (36 + Math.round(Math.random()*28)) + ' ms'; }, 900);
+
+/* coords readout */
+const latOut = document.getElementById('lat'), lonOut = document.getElementById('lon');
+function updateCoords(){
+  raycaster.setFromCamera(mouseNDC, camera);
+  if(mode==='3d'){
+    const hit = raycaster.intersectObject(earth, false)[0];
+    if(hit){
+      const p = globeGroup.worldToLocal(hit.point.clone());
+      const lat = 90 - Math.acos(THREE.MathUtils.clamp(p.y/R,-1,1))*180/Math.PI;
+      let lon = Math.atan2(p.z, -p.x)*180/Math.PI - 180;
+      if(lon < -180) lon += 360;
+      latOut.textContent = lat.toFixed(2)+'°';
+      lonOut.textContent = lon.toFixed(2)+'°';
+    }
+  } else {
+    const hit = raycaster.intersectObject(flatPlane, false)[0];
+    if(hit){
+      const p = flatGroup.worldToLocal(hit.point.clone());
+      latOut.textContent = THREE.MathUtils.clamp(p.y/2.15*90,-90,90).toFixed(2)+'°';
+      lonOut.textContent = THREE.MathUtils.clamp(p.x/4.3*180,-180,180).toFixed(2)+'°';
+    }
+  }
+}
+
+/* ---------- label projection ---------- */
+const tmpV = new THREE.Vector3();
+function occluded3D(worldP){
+  const o = camera.position;
+  const d = tmpV.copy(worldP).sub(o);
+  const L = d.length(); d.divideScalar(L);
+  const b = o.dot(d);
+  const c = o.lengthSq() - (R*globeGroup.scale.x*0.995)**2;
+  const disc = b*b - c;
+  if(disc <= 0) return false;
+  const t = -b - Math.sqrt(disc);
+  return t > 0 && t < L - 0.02;
+}
+function updateLabels(){
+  const w = innerWidth, h = innerHeight;
+  for(const a of anchors){
+    const local = a.getLocalPos(mode);
+    const world = mode==='3d'
+      ? local.clone().applyMatrix4(globeGroup.matrixWorld)
+      : local.clone().applyMatrix4(flatGroup.matrixWorld);
+    const hidden = (mode==='3d') ? occluded3D(world) : false;
+    const proj = world.clone().project(camera);
+    if(proj.z > 1){ a.el.style.opacity = 0; continue; }
+    const x = (proj.x*0.5+0.5)*w, y = (-proj.y*0.5+0.5)*h;
+    a.el.style.transform = `translate(-50%,-50%) translate(${x.toFixed(1)}px,${y.toFixed(1)}px)`;
+    a.el.style.opacity = hidden ? 0.08 : 1;
+    a.el.style.pointerEvents = hidden ? 'none' : '';
+  }
+}
+
+/* ---------- intro & loop ---------- */
+const introStart = performance.now();
+const note = document.getElementById('loadnote');
+setTimeout(()=>{ note.style.opacity = 0; }, 1200);
+globeGroup.rotation.y = -1.2;
+
+let last = performance.now();
+function tick(now){
+  requestAnimationFrame(tick);
+  const dt = Math.min((now-last)/1000, 0.05); last = now;
+
+  /* intro dolly */
+  const ik = Math.min((now-introStart)/1900, 1);
+  const ie = 1 - Math.pow(1-ik, 3);
+  if(ik < 1){
+    dist = 18 + (targetDist-18)*ie;
+    globeGroup.rotation.y = -1.2 + 0.9*ie;
+  } else {
+    dist += (targetDist - dist) * Math.min(dt*6, 1);
+  }
+  camera.position.set(mode==='2d' ? -panX : 0, 0.3, dist);
+  camera.lookAt(mode==='2d' ? -panX : 0, 0, 0);
+
+  /* inertia + idle rotation */
+  if(!dragging && mode==='3d' && ik>=1){
+    globeGroup.rotation.y += velY;
+    globeGroup.rotation.x = THREE.MathUtils.clamp(globeGroup.rotation.x + velX, -0.7, 0.7);
+    velY *= 0.94; velX *= 0.9;
+    globeGroup.rotation.y += 0.0165*dt;              /* gentle drift */
+    globeGroup.rotation.x += (0 - globeGroup.rotation.x)*0.006; /* soft recentering */
+  }
+  clouds.rotation.y += 0.006*dt; /* clouds drift relative to surface */
+
+  /* flights */
+  routes.forEach(rt=>{ rt.t += rt.speed*dt; if(rt.t > 1) rt.t = 0; });
+
+  if(modeAnim) modeAnim(now);
+  globeGroup.updateMatrixWorld();
+  flatGroup.updateMatrixWorld();
+  updateLabels();
+  composer.render();
+}
+requestAnimationFrame(tick);
+
+addEventListener('resize', ()=>{
+  camera.aspect = innerWidth/innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+  composer.setSize(innerWidth, innerHeight);
+});
+</script>
+</body>
+</html>

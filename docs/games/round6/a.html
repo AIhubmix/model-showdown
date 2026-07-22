@@ -1,0 +1,847 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AERIS · Global View</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --accent:#F5C518;
+  --blue:#3B6BFF;
+  --ink:#0a1128;
+  --t1:rgba(255,255,255,.96);
+  --t2:rgba(255,255,255,.62);
+  --t3:rgba(255,255,255,.38);
+  --glass-bg:rgba(255,255,255,.09);
+  --glass-bd:rgba(255,255,255,.15);
+  --glass-sh:0 8px 24px rgba(0,0,0,.35);
+}
+*{margin:0;padding:0;box-sizing:border-box;-webkit-font-smoothing:antialiased}
+html,body{width:100%;height:100%;overflow:hidden}
+body{
+  font-family:'Inter','Space Grotesk',-apple-system,sans-serif;
+  background:radial-gradient(120% 100% at 50% 38%, #0a1128 0%, #060d22 48%, #020508 100%);
+  color:var(--t1);
+  user-select:none;
+}
+#vignette{position:fixed;inset:0;pointer-events:none;z-index:3;
+  background:radial-gradient(90% 90% at 50% 46%, transparent 52%, rgba(1,3,8,.42) 100%);}
+#webglWrap{position:fixed;inset:0;z-index:1;transition:opacity .7s cubic-bezier(.4,0,.2,1),filter .7s,transform .7s}
+body.mode-2d #webglWrap{opacity:.10;filter:blur(8px) saturate(.7);transform:scale(.975)}
+canvas#gl{display:block;cursor:grab}
+canvas#gl.dragging{cursor:grabbing}
+
+/* ---------- generic glass ---------- */
+.glass{background:var(--glass-bg);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+  border:1px solid var(--glass-bd);box-shadow:var(--glass-sh)}
+.pill-r{border-radius:999px}
+
+/* ---------- header ---------- */
+header{position:fixed;top:0;left:0;right:0;height:92px;z-index:10;display:flex;align-items:flex-start;
+  justify-content:space-between;padding:24px 32px 0;pointer-events:none}
+header>*{pointer-events:auto}
+.brand{display:flex;align-items:center;gap:12px;padding:8px 16px 8px 8px;border-radius:999px;
+  background:rgba(255,255,255,.07);backdrop-filter:blur(14px);border:1px solid var(--glass-bd);box-shadow:var(--glass-sh)}
+.brand .mark{width:34px;height:34px;border-radius:10px;background:linear-gradient(135deg,#1a2547,#0a1128);
+  display:flex;align-items:center;justify-content:center;border:1px solid rgba(255,255,255,.14)}
+.brand .name{font-weight:700;font-size:14px;letter-spacing:-.02em;line-height:1.1}
+.brand .sub{font-weight:500;font-size:10px;color:var(--t3);letter-spacing:.08em;text-transform:uppercase;margin-top:2px}
+.title-block{position:absolute;left:50%;top:20px;transform:translateX(-50%);text-align:center}
+.title-block h1{font-family:'Space Grotesk','Inter',sans-serif;font-weight:500;font-size:42px;
+  letter-spacing:-.02em;line-height:1;color:var(--t1)}
+.live-row{margin-top:12px;display:flex;align-items:center;justify-content:center;gap:8px;
+  font-size:11px;font-weight:600;letter-spacing:.22em;color:var(--t2)}
+.live-dot{width:7px;height:7px;border-radius:50%;background:#3ddc84;animation:breath 2.2s ease-in-out infinite}
+@keyframes breath{0%,100%{box-shadow:0 0 0 0 rgba(61,220,132,.55);opacity:1}50%{box-shadow:0 0 0 7px rgba(61,220,132,0);opacity:.75}}
+.live-row .ms{letter-spacing:.08em;color:var(--t3);font-weight:500;font-variant-numeric:tabular-nums}
+.user-block{display:flex;align-items:center;gap:12px}
+.user-chip{display:flex;align-items:center;gap:10px;padding:6px 14px 6px 6px;border-radius:999px;
+  background:rgba(255,255,255,.07);backdrop-filter:blur(14px);border:1px solid var(--glass-bd);box-shadow:var(--glass-sh);cursor:pointer}
+.avatar{width:32px;height:32px;border-radius:50%;background:linear-gradient(135deg,#5a6b9e,#232f52);
+  display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;color:#fff;
+  border:1px solid rgba(255,255,255,.25)}
+.user-chip .uname{font-weight:600;font-size:13px;letter-spacing:-.01em}
+.bell{position:relative;width:42px;height:42px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+  background:rgba(255,255,255,.07);backdrop-filter:blur(14px);border:1px solid var(--glass-bd);box-shadow:var(--glass-sh);cursor:pointer;color:var(--t2)}
+.bell .rdot{position:absolute;top:9px;right:10px;width:7px;height:7px;border-radius:50%;background:#ff4d4f;border:1.5px solid #060d22}
+
+/* ---------- side nav ---------- */
+#sideNav{position:fixed;left:24px;top:50%;transform:translateY(-50%);z-index:10;
+  display:flex;flex-direction:column;align-items:center;gap:4px;padding:10px 8px;border-radius:999px;
+  background:rgba(255,255,255,.08);backdrop-filter:blur(16px);border:1px solid var(--glass-bd);box-shadow:var(--glass-sh)}
+.nav-btn{position:relative;width:40px;height:40px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+  color:var(--t3);cursor:pointer;transition:all .25s;border:1px solid transparent}
+.nav-btn:hover{color:var(--t1);background:rgba(255,255,255,.08)}
+.nav-btn.active{color:#dfe8ff;background:rgba(120,150,255,.16);border-color:rgba(160,180,255,.28);
+  box-shadow:0 0 18px rgba(90,120,255,.25)}
+.nav-btn .notify{position:absolute;top:6px;right:6px;width:7px;height:7px;border-radius:50%;background:var(--accent);border:1.5px solid #0a1128}
+.nav-sep{width:20px;height:1px;background:rgba(255,255,255,.12);margin:4px 0}
+
+/* ---------- hero copy ---------- */
+#hero{position:fixed;left:96px;top:50%;transform:translateY(-56%);z-index:9;max-width:340px}
+.tag-pill{display:inline-flex;align-items:center;gap:8px;padding:7px 16px;border-radius:999px;
+  font-size:11px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:var(--t2);
+  background:rgba(255,255,255,.08);backdrop-filter:blur(12px);border:1px solid var(--glass-bd);box-shadow:var(--glass-sh)}
+.tag-pill .spark{width:6px;height:6px;border-radius:50%;background:var(--accent)}
+#hero h2{margin-top:24px;font-weight:700;font-size:46px;line-height:1.08;letter-spacing:-.02em;color:var(--t1)}
+#hero h2 .glint{display:inline-block;vertical-align:6px;margin-left:6px}
+.hero-link{display:inline-block;margin-top:32px;font-size:12px;font-weight:700;letter-spacing:.22em;color:var(--accent);
+  text-decoration:none;padding-bottom:6px;border-bottom:1px solid rgba(245,197,24,.45);transition:border-color .25s,letter-spacing .3s;cursor:pointer}
+.hero-link:hover{border-bottom-color:var(--accent);letter-spacing:.28em}
+
+/* ---------- stats card ---------- */
+#stats{position:fixed;right:48px;top:50%;transform:translateY(-58%);z-index:9;width:252px;
+  padding:24px;border-radius:16px;background:rgba(255,255,255,.08);backdrop-filter:blur(16px);
+  border:1px solid var(--glass-bd);box-shadow:var(--glass-sh)}
+#stats h3{font-family:'Space Grotesk','Inter',sans-serif;font-weight:600;font-size:21px;letter-spacing:-.02em;line-height:1.15;margin-bottom:24px}
+.stat-group{margin-bottom:24px}
+.stat-group:last-child{margin-bottom:0}
+.stat-label{font-size:12px;font-weight:500;color:var(--t3);margin-bottom:8px}
+.stat-line{display:flex;align-items:baseline;gap:10px}
+.stat-num{font-weight:700;font-size:34px;letter-spacing:-.02em;font-variant-numeric:tabular-nums;line-height:1}
+.badge-up{display:inline-flex;align-items:center;gap:3px;font-size:11px;font-weight:700;color:#3ddc84;
+  padding:3px 8px;border-radius:999px;background:rgba(61,220,132,.10);border:1px solid rgba(61,220,132,.22)}
+.sparkline{margin-top:12px;display:block;opacity:.85}
+
+/* ---------- coords ---------- */
+#coords{position:fixed;left:96px;bottom:32px;z-index:9;font-size:12px;font-weight:500;color:var(--t3);
+  font-variant-numeric:tabular-nums;line-height:1.9;letter-spacing:.04em}
+#coords b{color:var(--t2);font-weight:600;margin-left:8px;display:inline-block;min-width:118px}
+#coords .axis{color:var(--t3);font-weight:600;letter-spacing:.18em;font-size:10px}
+
+/* ---------- bottom center ---------- */
+#bottomCenter{position:fixed;left:50%;bottom:26px;transform:translateX(-50%);z-index:11;
+  display:flex;flex-direction:column;align-items:center;gap:12px}
+.mode-toggle{display:flex;gap:4px;padding:4px;border-radius:999px;
+  background:rgba(255,255,255,.08);backdrop-filter:blur(16px);border:1px solid var(--glass-bd);box-shadow:var(--glass-sh)}
+.mode-btn{display:flex;align-items:center;gap:8px;padding:9px 22px;border-radius:999px;border:none;background:transparent;
+  color:var(--t2);font-family:'Inter',sans-serif;font-size:13px;font-weight:600;letter-spacing:.02em;cursor:pointer;transition:all .3s}
+.mode-btn.active{background:var(--accent);color:var(--ink);box-shadow:0 4px 16px rgba(245,197,24,.35)}
+#activitiesBtn{display:flex;align-items:center;gap:10px;padding:12px 28px;border-radius:999px;border:1px solid rgba(255,255,255,.6);
+  background:rgba(244,247,255,.96);color:var(--ink);font-family:'Inter',sans-serif;font-size:12px;font-weight:700;
+  letter-spacing:.18em;cursor:pointer;box-shadow:0 8px 24px rgba(0,0,0,.4);transition:transform .25s,box-shadow .25s}
+#activitiesBtn:hover{transform:translateY(-2px);box-shadow:0 12px 32px rgba(0,0,0,.5)}
+#activitiesBtn svg{transition:transform .45s cubic-bezier(.32,.72,.24,1)}
+body.drawer-open #activitiesBtn svg{transform:rotate(180deg)}
+
+/* ---------- zoom ---------- */
+#zoomCtl{position:fixed;right:48px;bottom:32px;z-index:10;display:flex;align-items:center;gap:8px}
+#zoomCtl .zlabel{font-size:13px;font-weight:500;color:var(--t2);margin-right:8px}
+.zbtn{width:38px;height:38px;border-radius:50%;display:flex;align-items:center;justify-content:center;cursor:pointer;
+  color:var(--t1);background:rgba(255,255,255,.09);backdrop-filter:blur(12px);border:1px solid var(--glass-bd);
+  box-shadow:var(--glass-sh);transition:all .25s}
+.zbtn:hover{background:rgba(255,255,255,.18);transform:translateY(-2px)}
+.zbtn.solid{background:rgba(244,247,255,.96);color:var(--ink);border-color:rgba(255,255,255,.6)}
+.zbtn.solid:hover{background:#fff}
+
+/* ---------- 3D labels ---------- */
+#labels{position:fixed;inset:0;z-index:5;pointer-events:none;overflow:hidden;transition:opacity .5s}
+body.mode-2d #labels{opacity:0}
+.lbl{position:absolute;top:0;left:0;pointer-events:auto;will-change:transform,opacity;transition:opacity .15s linear}
+.city-label{display:flex;align-items:center;gap:6px;padding:6px 14px;border-radius:999px;
+  background:rgba(248,250,255,.94);color:var(--ink);font-size:11px;font-weight:700;letter-spacing:.06em;
+  box-shadow:0 6px 18px rgba(0,0,0,.4);cursor:pointer;transition:transform .2s,box-shadow .2s;border:1px solid rgba(255,255,255,.7)}
+.city-label:hover{transform:scale(1.1);box-shadow:0 8px 26px rgba(245,197,24,.35)}
+.flight-badge{display:flex;align-items:center;gap:6px;padding:5px 12px;border-radius:999px;
+  background:rgba(10,17,40,.82);backdrop-filter:blur(8px);color:#fff;font-size:11px;font-weight:600;letter-spacing:.05em;
+  border:1px solid rgba(255,255,255,.18);box-shadow:0 6px 18px rgba(0,0,0,.45);cursor:pointer;transition:transform .2s,border-color .2s}
+.flight-badge:hover{transform:scale(1.12);border-color:var(--accent)}
+.flight-badge .fd{width:5px;height:5px;border-radius:50%;background:var(--accent)}
+
+/* ---------- 2D map ---------- */
+#map2dWrap{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%) scale(.96);z-index:6;
+  opacity:0;pointer-events:none;transition:opacity .6s cubic-bezier(.4,0,.2,1),transform .6s cubic-bezier(.4,0,.2,1);
+  border-radius:16px;overflow:hidden;border:1px solid var(--glass-bd);box-shadow:0 24px 64px rgba(0,0,0,.5)}
+body.mode-2d #map2dWrap{opacity:1;transform:translate(-50%,-50%) scale(1);pointer-events:auto}
+#map2d{display:block}
+
+/* ---------- drawer ---------- */
+#drawer{position:fixed;left:50%;bottom:0;z-index:12;width:min(880px,92vw);
+  transform:translate(-50%,112%);transition:transform .65s cubic-bezier(.32,.72,.24,1)}
+body.drawer-open #drawer{transform:translate(-50%,0)}
+.drawer-inner{display:flex;gap:16px;padding:16px 16px 28px;align-items:stretch}
+.table-card{flex:1.65;background:#f5f8ff;border-radius:16px;padding:24px;color:var(--ink);
+  box-shadow:0 24px 64px rgba(0,0,0,.5)}
+.table-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px}
+.table-head h4{font-size:20px;font-weight:700;letter-spacing:-.02em}
+.search-pill{display:flex;align-items:center;gap:8px;padding:9px 18px;border-radius:999px;background:#fff;
+  border:1px solid #e2e8f5;color:#8a94ad;font-size:12px;font-weight:500;min-width:170px}
+.filter-btn{width:38px;height:38px;border-radius:50%;background:#fff;border:1px solid #e2e8f5;
+  display:flex;align-items:center;justify-content:center;color:#4a5570;cursor:pointer}
+.th-row,.t-row{display:grid;grid-template-columns:1.35fr 1.9fr .95fr .85fr;align-items:center;gap:12px}
+.th-row{font-size:10px;font-weight:700;letter-spacing:.14em;color:#9aa3b8;text-transform:uppercase;padding:0 4px 12px}
+.t-row{padding:14px 4px;border-top:1px solid #e8edf8}
+.cargo-cell{display:flex;align-items:center;gap:12px;font-weight:700;font-size:14px;letter-spacing:-.01em}
+.cargo-ic{width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex:none}
+.cargo-ic.y{background:var(--accent);color:var(--ink)}
+.cargo-ic.b{background:var(--blue);color:#fff}
+.route-cell{display:flex;align-items:center;gap:8px;font-weight:700;font-size:13px}
+.route-track{flex:1;display:flex;align-items:center;gap:0;min-width:70px}
+.rt-dot{width:7px;height:7px;border-radius:50%;background:var(--blue);flex:none}
+.rt-dot.hollow{background:#fff;border:2px solid #c4cde2;width:8px;height:8px}
+.rt-solid{height:2.5px;background:var(--blue);border-radius:2px}
+.rt-dash{flex:1;border-top:2px dashed #c4cde2;margin:0 2px}
+.date-cell{font-size:13px;font-weight:500;color:#5a6478}
+.status-badge{display:inline-flex;justify-content:center;padding:7px 0;border-radius:999px;font-size:12px;font-weight:700;width:88px}
+.status-badge.pending{background:var(--blue);color:#fff}
+.status-badge.arrived{background:var(--accent);color:var(--ink)}
+.risk-card{flex:1;border-radius:16px;padding:24px;color:#fff;position:relative;overflow:hidden;
+  background:linear-gradient(160deg,#4a79ff 0%,#2f56e8 60%,#2447cc 100%);box-shadow:0 24px 64px rgba(20,50,180,.45)}
+.risk-card::before{content:"";position:absolute;inset:0;
+  background-image:linear-gradient(rgba(255,255,255,.06) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.06) 1px,transparent 1px);
+  background-size:34px 34px;pointer-events:none}
+.risk-top{display:flex;align-items:flex-start;justify-content:space-between;position:relative}
+.risk-top h4{font-size:19px;font-weight:700;letter-spacing:-.02em;line-height:1.2}
+.details-pill{padding:8px 18px;border-radius:999px;background:var(--accent);color:var(--ink);
+  font-size:10px;font-weight:800;letter-spacing:.14em;cursor:pointer;border:none}
+.risk-label{margin-top:24px;font-size:12px;font-weight:500;color:rgba(255,255,255,.72)}
+.risk-num{font-size:56px;font-weight:700;letter-spacing:-.03em;line-height:1;margin-top:4px;display:flex;align-items:center;gap:10px}
+.risk-num svg{opacity:.8}
+.risk-desc{margin-top:12px;font-size:13px;font-weight:500;color:rgba(255,255,255,.85);line-height:1.5}
+.gauge{margin-top:16px;position:relative;display:flex;justify-content:center}
+
+/* ---------- loader ---------- */
+#loader{position:fixed;inset:0;z-index:50;background:radial-gradient(120% 100% at 50% 38%,#0a1128 0%,#020508 100%);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:20px;transition:opacity .8s,visibility .8s}
+#loader.done{opacity:0;visibility:hidden}
+#loader .l-mark{width:56px;height:56px;border-radius:16px;background:linear-gradient(135deg,#1a2547,#0a1128);
+  border:1px solid rgba(255,255,255,.15);display:flex;align-items:center;justify-content:center;animation:lpulse 1.6s ease-in-out infinite}
+@keyframes lpulse{0%,100%{box-shadow:0 0 0 0 rgba(245,197,24,.25)}50%{box-shadow:0 0 0 14px rgba(245,197,24,0)}}
+#loader .l-txt{font-size:11px;font-weight:600;letter-spacing:.3em;color:var(--t3)}
+</style>
+</head>
+<body>
+
+<div id="loader">
+  <div class="l-mark">
+    <svg width="28" height="28" viewBox="0 0 24 24" fill="none"><path d="M4 5l7 7-7 7V5z" fill="#F5C518"/><path d="M13 5l7 7-7 7V5z" fill="#F5C518" opacity=".45"/></svg>
+  </div>
+  <div class="l-txt">INITIALIZING GLOBAL VIEW</div>
+</div>
+
+<div id="webglWrap"></div>
+<div id="vignette"></div>
+<div id="labels"></div>
+
+<header>
+  <div class="brand">
+    <div class="mark">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M4 5l7 7-7 7V5z" fill="#F5C518"/><path d="M13 5l7 7-7 7V5z" fill="#F5C518" opacity=".45"/></svg>
+    </div>
+    <div>
+      <div class="name">AERIS</div>
+      <div class="sub">AI Logistics OS</div>
+    </div>
+  </div>
+
+  <div class="title-block">
+    <h1>Global View</h1>
+    <div class="live-row">
+      <span class="live-dot"></span>
+      <span>LIVE TRACKING</span>
+      <span class="ms" id="msTicker">153 ms</span>
+    </div>
+  </div>
+
+  <div class="user-block">
+    <div class="user-chip">
+      <div class="avatar">K</div>
+      <span class="uname">Kai</span>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,.5)" stroke-width="2.4" stroke-linecap="round"><path d="M6 9l6 6 6-6"/></svg>
+    </div>
+    <div class="bell">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>
+      <span class="rdot"></span>
+    </div>
+  </div>
+</header>
+
+<nav id="sideNav">
+  <div class="nav-btn active" title="Globe">
+    <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.6 3.8 5.7 3.8 9S14.5 18.4 12 21c-2.5-2.6-3.8-5.7-3.8-9S9.5 5.6 12 3z"/></svg>
+  </div>
+  <div class="nav-btn" title="Cargo">
+    <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8l-9-5-9 5v8l9 5 9-5V8z"/><path d="M3 8l9 5 9-5M12 13v8"/></svg>
+    <span class="notify"></span>
+  </div>
+  <div class="nav-btn" title="History">
+    <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg>
+  </div>
+  <div class="nav-btn" title="Fleet">
+    <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17.8 19.2L16 11l3.5-3.5c1.5-1.5 1.5-3 .8-3.8-.8-.8-2.3-.8-3.8.8L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.3.5c-.2.5 0 1 .4 1.3L9 12l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.5 5.2c.3.4.8.6 1.3.4l.5-.3c.4-.2.6-.6.5-1.1z"/></svg>
+  </div>
+  <div class="nav-btn" title="Account">
+    <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-6.5 8-6.5s8 2.5 8 6.5"/></svg>
+  </div>
+  <div class="nav-sep"></div>
+  <div class="nav-btn" title="Settings">
+    <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2.2"/><circle cx="10" cy="17" r="2.2"/></svg>
+  </div>
+</nav>
+
+<section id="hero">
+  <span class="tag-pill"><span class="spark"></span>AI-Powered</span>
+  <h2>Plan Your<br>Route with<br>AI Now
+    <svg class="glint" width="22" height="22" viewBox="0 0 24 24" fill="#F5C518"><path d="M12 2c.6 5.4 4.6 9.4 10 10-5.4.6-9.4 4.6-10 10-.6-5.4-4.6-9.4-10-10 5.4-.6 9.4-4.6 10-10z"/></svg>
+  </h2>
+  <a class="hero-link">HOW IT WORKS</a>
+</section>
+
+<aside id="stats">
+  <h3>Main<br>Statistics</h3>
+  <div class="stat-group">
+    <div class="stat-label">Monthly Delivered</div>
+    <div class="stat-line">
+      <span class="stat-num" id="statMonthly">1,021</span>
+      <span class="badge-up"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#3ddc84" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17L17 7M9 7h8v8"/></svg>+32%</span>
+    </div>
+    <svg class="sparkline" width="204" height="34" viewBox="0 0 204 34" fill="none">
+      <path d="M2 28 C 22 26, 30 18, 48 20 S 78 30, 96 22 S 128 6, 150 12 S 185 8, 202 4" stroke="rgba(140,170,255,.9)" stroke-width="2" stroke-linecap="round"/>
+      <path d="M2 28 C 22 26, 30 18, 48 20 S 78 30, 96 22 S 128 6, 150 12 S 185 8, 202 4 L 202 34 L 2 34 Z" fill="url(#sg1)" opacity=".35"/>
+      <defs><linearGradient id="sg1" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8caaff"/><stop offset="1" stop-color="#8caaff" stop-opacity="0"/></linearGradient></defs>
+    </svg>
+  </div>
+  <div class="stat-group">
+    <div class="stat-label">Yearly Delivered</div>
+    <div class="stat-line">
+      <span class="stat-num" id="statYearly">4,603</span>
+      <span class="badge-up"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#3ddc84" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17L17 7M9 7h8v8"/></svg>+12%</span>
+    </div>
+    <svg class="sparkline" width="204" height="34" viewBox="0 0 204 34" fill="none">
+      <path d="M2 26 C 24 30, 40 14, 62 18 S 100 28, 122 16 S 160 4, 180 10 S 196 8, 202 6" stroke="rgba(245,197,24,.9)" stroke-width="2" stroke-linecap="round"/>
+      <path d="M2 26 C 24 30, 40 14, 62 18 S 100 28, 122 16 S 160 4, 180 10 S 196 8, 202 6 L 202 34 L 2 34 Z" fill="url(#sg2)" opacity=".3"/>
+      <defs><linearGradient id="sg2" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#F5C518"/><stop offset="1" stop-color="#F5C518" stop-opacity="0"/></linearGradient></defs>
+    </svg>
+  </div>
+</aside>
+
+<div id="coords">
+  <div><span class="axis">LAT</span><b id="latVal">—</b></div>
+  <div><span class="axis">LON</span><b id="lonVal">—</b></div>
+</div>
+
+<div id="bottomCenter">
+  <div class="mode-toggle">
+    <button class="mode-btn active" id="btn3d">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8l-9-5-9 5v8l9 5 9-5V8z"/><path d="M3 8l9 5 9-5M12 13v8"/></svg>3D
+    </button>
+    <button class="mode-btn" id="btn2d">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 5-9 5-9-5 9-5z"/><path d="M3 13l9 5 9-5"/></svg>2D
+    </button>
+  </div>
+  <button id="activitiesBtn">
+    <span id="actLabel">ACTIVITIES</span>
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M18 15l-6-6-6 6"/></svg>
+  </button>
+</div>
+
+<div id="zoomCtl">
+  <span class="zlabel">Zoom</span>
+  <div class="zbtn" id="zoomIn"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></div>
+  <div class="zbtn" id="zoomOut"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M5 12h14"/></svg></div>
+  <div class="zbtn solid" id="fsBtn"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3"/></svg></div>
+</div>
+
+<div id="map2dWrap"><canvas id="map2d"></canvas></div>
+
+<div id="drawer">
+  <div class="drawer-inner">
+    <div class="table-card">
+      <div class="table-head">
+        <h4>Activities</h4>
+        <div style="display:flex;gap:12px;align-items:center">
+          <div class="search-pill">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+            Search
+          </div>
+          <div class="filter-btn">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M7 12h10M10 18h4"/></svg>
+          </div>
+        </div>
+      </div>
+      <div class="th-row"><span>Cargo ID</span><span>Destination</span><span>Arrival Date</span><span>Status</span></div>
+      <div class="t-row">
+        <div class="cargo-cell"><span class="cargo-ic y"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M21 16v-2l-8-5V3.5A1.5 1.5 0 0 0 11.5 2 1.5 1.5 0 0 0 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5z"/></svg></span>AA-845</div>
+        <div class="route-cell"><span>USA</span><span class="route-track"><span class="rt-dot"></span><span class="rt-solid" style="width:58%"></span><span class="rt-dash"></span><span class="rt-dot hollow"></span></span><span>COL</span></div>
+        <div class="date-cell">Jun 5, 2024</div>
+        <div><span class="status-badge pending">Pending</span></div>
+      </div>
+      <div class="t-row">
+        <div class="cargo-cell"><span class="cargo-ic b"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8l-9-5-9 5v8l9 5 9-5V8z"/><path d="M3 8l9 5 9-5M12 13v8"/></svg></span>JL-748</div>
+        <div class="route-cell"><span>CHN</span><span class="route-track"><span class="rt-dot"></span><span class="rt-solid" style="width:76%"></span><span class="rt-dash"></span><span class="rt-dot hollow"></span></span><span>KOR</span></div>
+        <div class="date-cell">Jun 3, 2024</div>
+        <div><span class="status-badge pending">Pending</span></div>
+      </div>
+      <div class="t-row">
+        <div class="cargo-cell"><span class="cargo-ic b"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M21 16v-2l-8-5V3.5A1.5 1.5 0 0 0 11.5 2 1.5 1.5 0 0 0 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5z"/></svg></span>MU-131</div>
+        <div class="route-cell"><span>JPN</span><span class="route-track"><span class="rt-dot"></span><span class="rt-solid" style="width:34%"></span><span class="rt-dash"></span><span class="rt-dot hollow"></span></span><span>DEU</span></div>
+        <div class="date-cell">Apr 25, 2024</div>
+        <div><span class="status-badge arrived">Arrived</span></div>
+      </div>
+    </div>
+    <div class="risk-card">
+      <div class="risk-top">
+        <h4>Risk of<br>Cargo Loss</h4>
+        <button class="details-pill">DETAILS</button>
+      </div>
+      <div class="risk-label">Loss risk</div>
+      <div class="risk-num">10%
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 9l6 6 6-6"/></svg>
+      </div>
+      <div class="risk-desc">Minimal risk due<br>to good weather</div>
+      <div class="gauge">
+        <svg width="210" height="118" viewBox="0 0 210 118" fill="none">
+          <line x1="10" y1="100" x2="200" y2="100" stroke="rgba(255,255,255,.35)" stroke-width="1.5"/>
+          <path d="M30 100 A 75 75 0 0 1 180 100" stroke="rgba(255,255,255,.28)" stroke-width="3" stroke-linecap="round"/>
+          <path d="M30 100 A 75 75 0 0 1 72 40" stroke="#fff" stroke-width="3.5" stroke-linecap="round"/>
+          <circle cx="105" cy="66" r="17" fill="#fff"/>
+          <g stroke="#fff" stroke-width="3" stroke-linecap="round">
+            <line x1="105" y1="42" x2="105" y2="35"/><line x1="128" y1="49" x2="133" y2="44"/><line x1="82" y1="49" x2="77" y2="44"/>
+            <line x1="133" y1="70" x2="140" y2="72"/><line x1="77" y1="70" x2="70" y2="72"/>
+          </g>
+          <circle cx="105" cy="66" r="7" fill="#2f56e8"/>
+          <text x="105" y="116" text-anchor="middle" fill="rgba(255,255,255,.9)" font-family="Inter" font-size="13" font-weight="600">Sunny</text>
+        </svg>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+
+/* ============================== CORE ============================== */
+const R = 1.5;
+const ACCENT = 0xF5C518;
+const wrap = document.getElementById('webglWrap');
+
+const renderer = new THREE.WebGLRenderer({ antialias:true, alpha:true, powerPreference:'high-performance' });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 0.95;      // exposure discipline: <= 1.0
+renderer.domElement.id = 'gl';
+wrap.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(40, innerWidth/innerHeight, 0.1, 200);
+
+const composer = new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene, camera));
+const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.42, 0.55, 0.72); // strength <= 0.5
+composer.addPass(bloom);
+composer.addPass(new OutputPass());
+
+/* single sun light (drives clouds + shader uniform) — intensity <= 1.2 */
+const sunDir = new THREE.Vector3(2.1, 0.55, 2.3).normalize();
+const sun = new THREE.DirectionalLight(0xfff5e6, 1.1);
+sun.position.copy(sunDir).multiplyScalar(10);
+scene.add(sun, sun.target);
+scene.add(new THREE.AmbientLight(0x223355, 0.35)); // faint fill for clouds only
+
+/* ============================== TEXTURES (with procedural fallback) ============================== */
+function mulberry(seed){ return function(){ seed|=0; seed=seed+0x6D2B79F5|0; let t=Math.imul(seed^seed>>>15,1|seed); t=t+Math.imul(t^t>>>7,61|t)^t; return ((t^t>>>14)>>>0)/4294967296; }; }
+
+function fallbackEarthCanvas(){
+  const w=1024,h=512,c=document.createElement('canvas');c.width=w;c.height=h;
+  const x=c.getContext('2d'), rnd=mulberry(42);
+  const g=x.createLinearGradient(0,0,0,h);
+  g.addColorStop(0,'#0d2c50');g.addColorStop(.5,'#113a63');g.addColorStop(1,'#0d2c50');
+  x.fillStyle=g;x.fillRect(0,0,w,h);
+  for(let i=0;i<14;i++){ // landmass clusters
+    const cx=rnd()*w, cy=h*0.12+rnd()*h*0.76, n=26+rnd()*40, base=26+rnd()*54;
+    for(let j=0;j<n;j++){
+      const a=rnd()*Math.PI*2, d=rnd()*base*1.7, r=base*(0.25+rnd()*0.55);
+      const px=cx+Math.cos(a)*d*1.6, py=cy+Math.sin(a)*d*0.8;
+      x.fillStyle = rnd()>0.4 ? '#2c5a3f' : (rnd()>0.5?'#6f6247':'#3d6b4a');
+      x.beginPath();x.ellipse((px+w)%w,py,r,r*0.7,rnd()*3,0,7);x.fill();
+    }
+  }
+  x.fillStyle='rgba(240,246,252,.9)';x.fillRect(0,0,w,14);x.fillRect(0,h-14,w,14);
+  return c;
+}
+function fallbackSpecCanvas(){
+  const w=512,h=256,c=document.createElement('canvas');c.width=w;c.height=h;
+  const x=c.getContext('2d');x.fillStyle='#9a9a9a';x.fillRect(0,0,w,h);
+  x.filter='blur(3px)';x.drawImage(fallbackEarthCanvas(),0,0,w,h);
+  x.filter='none';x.globalCompositeOperation='saturation';x.fillStyle='#000';x.fillRect(0,0,w,h);
+  return c;
+}
+function fallbackCloudCanvas(){
+  const w=512,h=256,c=document.createElement('canvas');c.width=w;c.height=h;
+  const x=c.getContext('2d'), rnd=mulberry(7);
+  for(let i=0;i<90;i++){
+    const px=rnd()*w, py=rnd()*h, r=14+rnd()*46;
+    const g=x.createRadialGradient(px,py,0,px,py,r);
+    g.addColorStop(0,`rgba(255,255,255,${0.12+rnd()*0.28})`);g.addColorStop(1,'rgba(255,255,255,0)');
+    x.fillStyle=g;x.beginPath();x.arc(px,py,r,0,7);x.fill();
+  }
+  return c;
+}
+const dayTex  = new THREE.CanvasTexture(fallbackEarthCanvas()); dayTex.colorSpace = THREE.SRGBColorSpace;
+const specTex = new THREE.CanvasTexture(fallbackSpecCanvas());
+const cloudTex= new THREE.CanvasTexture(fallbackCloudCanvas()); cloudTex.colorSpace = THREE.SRGBColorSpace;
+
+const TL = new THREE.TextureLoader(); TL.setCrossOrigin('anonymous');
+function upgrade(url, assign, srgb=true){
+  TL.load(url, t=>{ if(srgb) t.colorSpace=THREE.SRGBColorSpace;
+    t.anisotropy=renderer.capabilities.getMaxAnisotropy(); assign(t); }, undefined, ()=>{/* fallback stays */});
+}
+const TEX_BASE='https://threejs.org/examples/textures/planets/';
+upgrade(TEX_BASE+'earth_atmos_2048.jpg',    t=>{ earthMat.uniforms.dayMap.value=t;  dayTex.image=t.image; });
+upgrade(TEX_BASE+'earth_specular_2048.jpg', t=>{ earthMat.uniforms.specMap.value=t; }, false);
+upgrade(TEX_BASE+'earth_clouds_1024.png',   t=>{ cloudMat.map=t; cloudMat.needsUpdate=true; });
+
+/* ============================== GLOBE ============================== */
+const globeGroup = new THREE.Group();
+scene.add(globeGroup);
+
+const earthMat = new THREE.ShaderMaterial({
+  uniforms:{ dayMap:{value:dayTex}, specMap:{value:specTex}, sunDir:{value:sunDir} },
+  vertexShader:`
+    varying vec2 vUv; varying vec3 vN; varying vec3 vP;
+    void main(){ vUv=uv; vN=normalize(mat3(modelMatrix)*normal);
+      vec4 wp=modelMatrix*vec4(position,1.0); vP=wp.xyz;
+      gl_Position=projectionMatrix*viewMatrix*wp; }`,
+  fragmentShader:`
+    uniform sampler2D dayMap; uniform sampler2D specMap; uniform vec3 sunDir;
+    varying vec2 vUv; varying vec3 vN; varying vec3 vP;
+    void main(){
+      vec3 N=normalize(vN);
+      vec3 V=normalize(cameraPosition-vP);
+      vec3 L=normalize(sunDir);
+      float d=dot(N,L);
+      vec3 tex=texture2D(dayMap,vUv).rgb;
+      float dayMix=smoothstep(-0.08,0.18,d);
+      float lit=clamp(d*1.30,0.0,1.12);              // small clip only at subsolar core
+      vec3 dayCol=tex*(0.18+lit);
+      float specMask=texture2D(specMap,vUv).r;        // restrained ocean specular
+      vec3 H=normalize(L+V);
+      float spec=pow(max(dot(N,H),0.0),28.0)*specMask*0.20*smoothstep(0.0,0.25,d);
+      dayCol+=vec3(1.0,0.98,0.92)*spec;
+      vec3 nightCol=tex*vec3(0.030,0.038,0.058);      // near-black night, keeps detail
+      float tw=(1.0-smoothstep(0.02,0.30,abs(d-0.02)))*smoothstep(-0.25,-0.02,d);
+      vec3 twilight=vec3(1.0,0.45,0.14)*tw*0.30;      // dawn/dusk warm band (shader, no extra light)
+      vec3 col=mix(nightCol,dayCol,dayMix)+twilight*(0.35+0.65*tex);
+      float fr=pow(1.0-max(dot(N,V),0.0),3.0);        // inner fresnel rim (light blue)
+      col+=vec3(0.35,0.55,1.0)*fr*0.16*(0.25+dayMix);
+      gl_FragColor=vec4(col,1.0);
+    }`
+});
+const earthMesh = new THREE.Mesh(new THREE.SphereGeometry(R, 96, 96), earthMat);
+globeGroup.add(earthMesh);
+
+const cloudMat = new THREE.MeshLambertMaterial({ map:cloudTex, transparent:true, opacity:0.85, depthWrite:false });
+const clouds = new THREE.Mesh(new THREE.SphereGeometry(R*1.018, 64, 64), cloudMat);
+globeGroup.add(clouds);
+
+/* outer atmosphere — backside fresnel halo, ~11% radius thick + bloom bleed (toned down, was too abrupt at 16%/1.35) */
+const atmoMat = new THREE.ShaderMaterial({
+  uniforms:{ sunDir:{value:sunDir} },
+  vertexShader:`
+    varying vec3 vNv; varying vec3 vNw;
+    void main(){ vNv=normalize(normalMatrix*normal); vNw=normalize(mat3(modelMatrix)*normal);
+      gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
+  fragmentShader:`
+    uniform vec3 sunDir; varying vec3 vNv; varying vec3 vNw;
+    void main(){
+      float rim=pow(max(0.62-dot(normalize(vNv),vec3(0.,0.,1.)),0.0),3.6);
+      float day=smoothstep(-0.35,0.45,dot(normalize(vNw),normalize(sunDir)));
+      vec3 col=mix(vec3(0.16,0.30,0.80),vec3(0.42,0.62,1.0),day);
+      gl_FragColor=vec4(col*rim*(0.30+0.70*day)*0.62,1.0);
+    }`,
+  side:THREE.BackSide, blending:THREE.AdditiveBlending, transparent:true, depthWrite:false
+});
+const atmo = new THREE.Mesh(new THREE.SphereGeometry(R*1.11, 64, 64), atmoMat);
+scene.add(atmo);
+atmo.onBeforeRender = ()=>{ atmo.position.copy(globeGroup.position); atmo.quaternion.copy(globeGroup.quaternion); };
+
+/* stars */
+{
+  const n=1400, pos=new Float32Array(n*3), rnd=mulberry(99);
+  for(let i=0;i<n;i++){
+    const v=new THREE.Vector3().randomDirection().multiplyScalar(30+rnd()*40);
+    pos.set([v.x,v.y,v.z], i*3);
+  }
+  const g=new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(pos,3));
+  scene.add(new THREE.Points(g, new THREE.PointsMaterial({color:0x8fa8d8,size:1.5,sizeAttenuation:false,transparent:true,opacity:0.55})));
+}
+
+/* ============================== GEO HELPERS ============================== */
+function ll(lat, lon, r){
+  const phi=(90-lat)*Math.PI/180, th=(lon+180)*Math.PI/180;
+  return new THREE.Vector3(-r*Math.sin(phi)*Math.cos(th), r*Math.cos(phi), r*Math.sin(phi)*Math.sin(th));
+}
+const smooth=(a,b,x)=>{ const t=Math.min(1,Math.max(0,(x-a)/(b-a))); return t*t*(3-2*t); };
+
+/* ============================== ROUTES / MARKERS ============================== */
+const CITIES={ USA:{lat:37.6,lon:-122.4}, COL:{lat:4.7,lon:-74.1},
+               CHN:{lat:31.2,lon:121.5},  KOR:{lat:37.5,lon:127.0},
+               JPN:{lat:35.7,lon:139.7},  DEU:{lat:50.1,lon:8.7} };
+const FLIGHTS=[
+  {id:'AA-845', from:'USA', to:'COL', t:0.30, speed:0.045},
+  {id:'JL-748', from:'CHN', to:'KOR', t:0.65, speed:0.090},
+  {id:'MU-131', from:'JPN', to:'DEU', t:0.12, speed:0.035},
+];
+
+const labelsRoot=document.getElementById('labels');
+const labelItems=[];
+
+function makeLabelEl(cls, html){
+  const d=document.createElement('div'); d.className='lbl '+cls; d.innerHTML=html;
+  labelsRoot.appendChild(d); return d;
+}
+
+/* plane sprite texture (yellow disc + dark plane glyph, drawn in code) */
+function planeTexture(){
+  const s=128,c=document.createElement('canvas');c.width=s;c.height=s;
+  const x=c.getContext('2d');
+  x.shadowColor='rgba(245,197,24,.65)';x.shadowBlur=18;
+  x.fillStyle='#F5C518';x.beginPath();x.arc(s/2,s/2,44,0,7);x.fill();
+  x.shadowBlur=0;x.fillStyle='#0a1128';
+  const p=new Path2D('M21 16v-2l-8-5V3.5A1.5 1.5 0 0 0 11.5 2 1.5 1.5 0 0 0 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5z');
+  x.translate(s/2,s/2);x.scale(2.4,2.4);x.translate(-12,-12);x.fill(p);
+  const t=new THREE.CanvasTexture(c);t.colorSpace=THREE.SRGBColorSpace;return t;
+}
+const planeTex=planeTexture();
+
+const flights=[];
+for(const f of FLIGHTS){
+  const pA=ll(CITIES[f.from].lat,CITIES[f.from].lon,R*1.004);
+  const pB=ll(CITIES[f.to].lat, CITIES[f.to].lon, R*1.004);
+  const ang=pA.angleTo(pB);
+  const mid=pA.clone().add(pB).multiplyScalar(0.5).normalize().multiplyScalar(R*(1.04+ang*0.30));
+  const curve=new THREE.QuadraticBezierCurve3(pA,mid,pB);
+  const tube=new THREE.Mesh(new THREE.TubeGeometry(curve,72,R*0.005,8,false),
+    new THREE.MeshBasicMaterial({color:ACCENT}));
+  globeGroup.add(tube);
+  const mat=new THREE.SpriteMaterial({map:planeTex,transparent:true,depthTest:true});
+  const sprite=new THREE.Sprite(mat); sprite.scale.setScalar(0.30); globeGroup.add(sprite);
+  const badge=makeLabelEl('flight-badge',`<span class="fd"></span>${f.id}`);
+  flights.push({...f,curve,sprite,badge,mat});
+  labelItems.push({el:badge,getObj:()=>sprite,offY:-46,kind:'badge'});
+}
+
+/* city dots + labels */
+for(const [code,c] of Object.entries(CITIES)){
+  const pos=ll(c.lat,c.lon,R*1.004);
+  const dot=new THREE.Mesh(new THREE.SphereGeometry(0.016,16,16),new THREE.MeshBasicMaterial({color:ACCENT}));
+  dot.position.copy(pos); globeGroup.add(dot);
+  const ring=new THREE.Mesh(new THREE.SphereGeometry(0.026,16,16),
+    new THREE.MeshBasicMaterial({color:0xffffff,transparent:true,opacity:0.35}));
+  ring.position.copy(pos); globeGroup.add(ring);
+  const anchor=new THREE.Object3D(); anchor.position.copy(pos); globeGroup.add(anchor);
+  const el=makeLabelEl('city-label',code);
+  labelItems.push({el,getObj:()=>anchor,offY:-42,kind:'city'});
+}
+
+/* ============================== CAMERA / INTERACTION ============================== */
+let camDist=9.6, targetDist=4.8, introT=0;
+let rotY=-1.1, rotX=0.28, targetRotY=-1.1, targetRotX=0.28;
+let velY=0, dragging=false, lastX=0, lastY=0, lastMoveT=0, idleT=0;
+const MIN_D=3.1, MAX_D=8.0;
+const cv=renderer.domElement;
+
+cv.addEventListener('pointerdown',e=>{dragging=true;cv.classList.add('dragging');lastX=e.clientX;lastY=e.clientY;velY=0;cv.setPointerCapture(e.pointerId);});
+addEventListener('pointermove',e=>{
+  if(dragging){
+    const dx=e.clientX-lastX, dy=e.clientY-lastY; lastX=e.clientX; lastY=e.clientY;
+    targetRotY+=dx*0.0052; targetRotX+=dy*0.0032;
+    targetRotX=Math.max(-0.75,Math.min(0.85,targetRotX));
+    velY=dx*0.0052; lastMoveT=performance.now(); idleT=0;
+  }
+  updateCoords(e);
+});
+addEventListener('pointerup',()=>{dragging=false;cv.classList.remove('dragging');});
+cv.addEventListener('wheel',e=>{e.preventDefault();targetDist*=1+e.deltaY*0.0011;
+  targetDist=Math.max(MIN_D,Math.min(MAX_D,targetDist));},{passive:false});
+
+document.getElementById('zoomIn').onclick =()=>{targetDist=Math.max(MIN_D,targetDist*0.82);};
+document.getElementById('zoomOut').onclick=()=>{targetDist=Math.min(MAX_D,targetDist*1.22);};
+document.getElementById('fsBtn').onclick=()=>{
+  document.fullscreenElement?document.exitFullscreen():document.documentElement.requestFullscreen();
+};
+
+/* coords readout */
+const ray=new THREE.Raycaster(), ndc=new THREE.Vector2();
+const latEl=document.getElementById('latVal'), lonEl=document.getElementById('lonVal');
+function updateCoords(e){
+  ndc.set(e.clientX/innerWidth*2-1, -(e.clientY/innerHeight)*2+1);
+  ray.setFromCamera(ndc,camera);
+  const hit=ray.intersectObject(earthMesh);
+  if(!hit.length){latEl.textContent='—';lonEl.textContent='—';return;}
+  const p=globeGroup.worldToLocal(hit[0].point.clone()).normalize();
+  const lat=Math.asin(THREE.MathUtils.clamp(p.y,-1,1))*180/Math.PI;
+  let lon=Math.atan2(p.z,-p.x)*180/Math.PI-180; if(lon<-180)lon+=360;
+  latEl.textContent=`${Math.abs(lat).toFixed(5)}° ${lat>=0?'N':'S'}`;
+  lonEl.textContent=`${Math.abs(lon).toFixed(5)}° ${lon>=0?'E':'W'}`;
+}
+
+/* 3D / 2D toggle */
+let mode2d=false;
+const btn3d=document.getElementById('btn3d'), btn2d=document.getElementById('btn2d');
+function setMode(m){
+  mode2d=(m==='2d');
+  document.body.classList.toggle('mode-2d',mode2d);
+  btn3d.classList.toggle('active',!mode2d);
+  btn2d.classList.toggle('active',mode2d);
+  if(mode2d) sizeMap2D();
+}
+btn3d.onclick=()=>setMode('3d'); btn2d.onclick=()=>setMode('2d');
+
+/* activities drawer */
+const actBtn=document.getElementById('activitiesBtn'), actLabel=document.getElementById('actLabel');
+actBtn.onclick=()=>{
+  const open=document.body.classList.toggle('drawer-open');
+  actLabel.textContent=open?'HIDE PANEL':'ACTIVITIES';
+};
+
+/* latency ticker */
+const msEl=document.getElementById('msTicker');
+setInterval(()=>{ msEl.textContent=`${120+Math.floor(Math.random()*70)} ms`; },1300);
+
+/* ============================== 2D MAP ============================== */
+const mapCv=document.getElementById('map2d'), mx=mapCv.getContext('2d');
+function sizeMap2D(){
+  const w=Math.min(940,innerWidth*0.62); mapCv.width=w*2; mapCv.height=w; // 2:1 equirect, 2x for retina
+  mapCv.style.width=w+'px'; mapCv.style.height=(w/2)+'px';
+}
+const PLANE_PATH='M21 16v-2l-8-5V3.5A1.5 1.5 0 0 0 11.5 2 1.5 1.5 0 0 0 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5z';
+function proj2D(lat,lon,W,H){ return [(lon+180)/360*W, (90-lat)/180*H]; }
+function draw2D(){
+  const W=mapCv.width,H=mapCv.height; if(!W)return;
+  mx.clearRect(0,0,W,H);
+  mx.fillStyle='#060d22';mx.fillRect(0,0,W,H);
+  const img=dayTex.image;
+  if(img){ mx.globalAlpha=0.92; mx.drawImage(img,0,0,W,H); mx.globalAlpha=1;
+    mx.fillStyle='rgba(4,9,24,.34)';mx.fillRect(0,0,W,H); }
+  mx.strokeStyle='rgba(255,255,255,.07)';mx.lineWidth=1;
+  for(let g=0;g<=360;g+=30){mx.beginPath();mx.moveTo(g/360*W,0);mx.lineTo(g/360*W,H);mx.stroke();}
+  for(let g=0;g<=180;g+=30){mx.beginPath();mx.moveTo(0,g/180*H);mx.lineTo(W,g/180*H);mx.stroke();}
+  mx.font=`600 ${W*0.016}px Inter`;mx.textBaseline='middle';
+  for(const f of flights){
+    const a=proj2D(CITIES[f.from].lat,CITIES[f.from].lon,W,H);
+    const b=proj2D(CITIES[f.to].lat,CITIES[f.to].lon,W,H);
+    const mdx=(a[0]+b[0])/2, mdy=(a[1]+b[1])/2;
+    const dx=b[0]-a[0], dy=b[1]-a[1], len=Math.hypot(dx,dy);
+    const cx=mdx-dy/len*len*0.22, cy=mdy+dx/len*len*0.22 - len*0.10;
+    mx.strokeStyle='#F5C518';mx.lineWidth=W*0.0035;mx.lineCap='round';
+    mx.beginPath();mx.moveTo(a[0],a[1]);mx.quadraticCurveTo(cx,cy,b[0],b[1]);mx.stroke();
+    const t=f.t, it=1-t;
+    const px=it*it*a[0]+2*it*t*cx+t*t*b[0], py=it*it*a[1]+2*it*t*cy+t*t*b[1];
+    const tx=2*it*(cx-a[0])+2*t*(b[0]-cx), ty=2*it*(cy-a[1])+2*t*(b[1]-cy);
+    mx.save();mx.translate(px,py);
+    mx.shadowColor='rgba(245,197,24,.7)';mx.shadowBlur=14;
+    mx.fillStyle='#F5C518';mx.beginPath();mx.arc(0,0,W*0.013,0,7);mx.fill();
+    mx.shadowBlur=0;mx.rotate(Math.atan2(ty,tx)+Math.PI/2);
+    mx.fillStyle='#0a1128';mx.scale(W*0.00072,W*0.00072);mx.translate(-12,-12);
+    mx.fill(new Path2D(PLANE_PATH));mx.restore();
+  }
+  for(const [code,c] of Object.entries(CITIES)){
+    const [px,py]=proj2D(c.lat,c.lon,W,H);
+    mx.fillStyle='#F5C518';mx.beginPath();mx.arc(px,py,W*0.006,0,7);mx.fill();
+    mx.strokeStyle='rgba(255,255,255,.85)';mx.lineWidth=2;mx.stroke();
+    const label=code; const tw=mx.measureText(label).width+W*0.02;
+    mx.fillStyle='rgba(248,250,255,.95)';
+    mx.beginPath();mx.roundRect(px-tw/2,py-W*0.034,tw,W*0.024,W*0.012);mx.fill();
+    mx.fillStyle='#0a1128';mx.textAlign='center';mx.fillText(label,px,py-W*0.022);
+  }
+}
+
+/* ============================== LABEL PROJECTION ============================== */
+const tmpV=new THREE.Vector3(), camN=new THREE.Vector3();
+function updateLabels(){
+  camN.copy(camera.position).normalize();
+  for(const L of labelItems){
+    L.getObj().getWorldPosition(tmpV);
+    const facing=tmpV.clone().normalize().dot(camN);
+    const vis=L.kind==='city'?smooth(0.10,0.42,facing):smooth(0.14,0.48,facing);
+    const p=tmpV.clone().project(camera);
+    const x=(p.x*0.5+0.5)*innerWidth, y=(-p.y*0.5+0.5)*innerHeight+L.offY;
+    L.el.style.transform=`translate(-50%,-50%) translate(${x.toFixed(1)}px,${y.toFixed(1)}px)`;
+    L.el.style.opacity=mode2d?0:vis.toFixed(3);
+    L.el.style.pointerEvents=vis>0.4?'auto':'none';
+  }
+}
+
+/* ============================== MAIN LOOP ============================== */
+const clock=new THREE.Clock();
+const easeOut=t=>1-Math.pow(1-t,3);
+const tv1=new THREE.Vector3(), tv2=new THREE.Vector3();
+
+function animate(){
+  requestAnimationFrame(animate);
+  const dt=Math.min(clock.getDelta(),0.05), el=clock.elapsedTime;
+
+  /* intro dolly (≈1.9s) */
+  if(introT<1){
+    introT=Math.min(1,introT+dt/1.9);
+    const e=easeOut(introT);
+    camDist=9.6+(4.8-9.6)*e;
+    targetRotY+= (0-(-1.1))*0; // target reached via lerp below
+    rotY=-1.1+(targetRotY-e.targetBase||0)*0;
+  }
+  if(!dragging){
+    targetRotY+=velY; velY*=0.94;                     // inertia
+    idleT+=dt;
+    if(idleT>3.5) targetRotY+=dt*0.055;               // gentle auto-spin
+  }
+  rotY+=(targetRotY-rotY)*Math.min(1,dt*7);
+  rotX+=(targetRotX-rotX)*Math.min(1,dt*7);
+  globeGroup.rotation.set(rotX,rotY,0);
+  clouds.rotation.y+=dt*0.012;                        // clouds drift vs surface
+
+  camDist+=(targetDist-camDist)*Math.min(1,dt*5);
+  camera.position.set(0,0,camDist);
+  camera.lookAt(0,0,0);
+
+  /* flights */
+  for(const f of flights){
+    f.t=(f.t+f.speed*dt)%1;
+    f.sprite.position.copy(f.curve.getPoint(f.t));
+    /* heading from screen-space tangent */
+    f.curve.getPoint(f.t,tv1); f.curve.getPoint((f.t+0.012)%1,tv2);
+    globeGroup.localToWorld(tv1); globeGroup.localToWorld(tv2);
+    const dWorld=tv2.clone().sub(tv1);
+    const a=tv1.clone().project(camera), b=tv2.clone().project(camera);
+    f.mat.rotation=Math.atan2(b.y-a.y,b.x-a.x)-Math.PI/2;
+    const facing=tv1.clone().normalize().dot(camera.position.clone().normalize());
+    f.mat.opacity=smooth(-0.02,0.22,facing)*(mode2d?0:1);
+    f.mat.rotation=isFinite(f.mat.rotation)?f.mat.rotation:0;
+    void dWorld;
+  }
+
+  updateLabels();
+  if(mode2d) draw2D();
+  composer.render();
+}
+
+/* ============================== RESIZE / BOOT ============================== */
+addEventListener('resize',()=>{
+  camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth,innerHeight);
+  composer.setSize(innerWidth,innerHeight);
+  if(mode2d) sizeMap2D();
+});
+
+animate();
+setTimeout(()=>document.getElementById('loader').classList.add('done'),700);
+</script>
+</body>
+</html>

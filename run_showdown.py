@@ -39,6 +39,7 @@ PRICING = {
     "gpt-5.6-sol": (5.0, 30.0),
     # qwen3.8-max-preview 官方未公布 per-token 牌价（订阅制预览），暂用前代 qwen3.7-max 牌价估算
     "qwen3.8-max-preview": (1.25, 3.75),
+    "gemini-3.6-flash": (1.50, 7.50),
 }
 
 # display name, max_tokens override (K3 always thinks at max effort — reasoning
@@ -100,10 +101,21 @@ MODELS = {
                        "retries": 8, "lineup": False},
     # Qwen3.8 Max Preview：大 HTML 产物给足输出预算；显式 --models 选入
     "qwen3.8-max-preview": {"display": "Qwen3.8 Max", "max_tokens": 120000, "lineup": False},
+    # Gemini 3.6 Flash (released 2026-07-21): native Google generateContent
+    # protocol via the gateway's /gemini passthrough (x-goog-api-key auth,
+    # SSE candidates[].content.parts[].text deltas). 65536 is its hard output
+    # ceiling per the official API spec.
+    "gemini-3.6-flash": {"display": "Gemini 3.6 Flash", "max_tokens": 65536, "lineup": False,
+                         "endpoint": "gemini",
+                         "params": {"generationConfig": {"maxOutputTokens": 65536,
+                                                          "thinkingConfig": {"thinkingLevel": "high"}}}},
 }
 DEFAULT_MAX_TOKENS = 60000
 
-REQUEST_TIMEOUT_S = 1200  # per socket read while streaming
+REQUEST_TIMEOUT_S = 3600  # per socket read while streaming
+# 曾经是 1200s：reasoning=max + 大体积多模态输入(图片)的请求真实生成耗时会
+# 稳定超过 30 分钟(TTFT 本身就要 11-12 分钟),1200s 会在服务端仍在正常吐流时
+# 由客户端自己抢先掐断连接——不是网关/上游的问题，是这个值定小了。
 RETRIES = 3
 RETRY_WAIT_S = 60
 HEARTBEAT_S = 30
@@ -171,6 +183,22 @@ def to_messages_content(content):
             media_type = header.split(":")[1].split(";")[0]
             parts.append({"type": "image",
                           "source": {"type": "base64", "media_type": media_type, "data": b64}})
+    return parts
+
+
+def to_gemini_parts(content):
+    """Convert chat-style user content (text + image_url) into Gemini native
+    generateContent `parts` (text / inline_data base64)."""
+    if isinstance(content, str):
+        return [{"text": content}]
+    parts = []
+    for p in content:
+        if p["type"] == "text":
+            parts.append({"text": p["text"]})
+        elif p["type"] == "image_url":
+            header, b64 = p["image_url"]["url"].split(",", 1)
+            mime_type = header.split(":")[1].split(";")[0]
+            parts.append({"inline_data": {"mime_type": mime_type, "data": b64}})
     return parts
 
 
@@ -423,6 +451,105 @@ def call_model_responses(model, prompt, label, ep_dir=None):
     }
 
 
+def call_model_gemini(model, prompt, label, ep_dir=None):
+    """Same contract as call_model, but via the native Google generateContent
+    protocol (x-goog-api-key auth, SSE candidates[].content.parts[].text
+    deltas) — see aihubmix-env skill §2.3."""
+    cfg = MODELS.get(model, {})
+    payload = {
+        "contents": [{"role": "user", "parts": to_gemini_parts(prompt)}],
+        "generationConfig": {"maxOutputTokens": cfg.get("max_tokens", DEFAULT_MAX_TOKENS)},
+    }
+    payload.update(cfg.get("params", {}))
+    base = GATEWAY.rsplit("/v1/", 1)[0]
+    req = urllib.request.Request(
+        f"{base}/gemini/v1beta/models/{model}:streamGenerateContent?alt=sse",
+        data=json.dumps(payload).encode(),
+        headers={
+            "Content-Type": "application/json",
+            "x-goog-api-key": API_KEY,
+            "Accept": "text/event-stream",
+        },
+    )
+    content, usage, finish, err = [], {}, None, None
+    chunks = 0
+    t0 = time.time()
+    next_beat = t0 + HEARTBEAT_S
+    conn_dropped = None
+    tl = Timeline(ep_dir, label, model, "gemini")
+    first_byte = first_content = False
+    try:
+        with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT_S) as resp:
+            for raw in resp:
+                if not first_byte:
+                    first_byte = True
+                    tl.mark("first_byte")
+                now = time.time()
+                if now >= next_beat:
+                    tl.mark("heartbeat", events=chunks,
+                            content_chars=sum(len(c) for c in content))
+                    print(f"[{label}] streaming(gemini)… {chunks} events, "
+                          f"{sum(len(c) for c in content)} content chars, "
+                          f"{now - t0:.0f}s elapsed", flush=True)
+                    next_beat = now + HEARTBEAT_S
+                line = raw.decode("utf-8", "replace").strip()
+                if not line.startswith("data:"):
+                    continue
+                try:
+                    ev = json.loads(line[5:].strip())
+                except ValueError:
+                    continue
+                chunks += 1
+                if "error" in ev:
+                    err = (ev.get("error") or {}).get("message", "stream error")
+                    continue
+                for cand in ev.get("candidates") or []:
+                    for part in (cand.get("content") or {}).get("parts") or []:
+                        text = part.get("text")
+                        if text:
+                            if not first_content:
+                                first_content = True
+                                tl.mark("first_content_delta", events=chunks)
+                            content.append(text)
+                    if cand.get("finishReason"):
+                        finish = cand["finishReason"]
+                u = ev.get("usageMetadata") or {}
+                if u:
+                    usage = {
+                        "prompt_tokens": u.get("promptTokenCount", 0),
+                        "completion_tokens": u.get("candidatesTokenCount", 0),
+                        "total_tokens": u.get("totalTokenCount", 0),
+                        "thoughts_tokens": u.get("thoughtsTokenCount", 0),
+                    }
+    except Exception as e:  # noqa: BLE001
+        # See call_model: salvage partial text on a mid-stream connection drop
+        # instead of discarding a possibly-complete generation.
+        conn_dropped = str(e)
+        tl.mark("connection_dropped", events=chunks,
+                content_chars=sum(len(c) for c in content), error=conn_dropped)
+        tl.finish("connection_dropped")
+        print(f"[{label}] connection dropped after {chunks} events, "
+              f"{sum(len(c) for c in content)} content chars: {conn_dropped}", flush=True)
+        if not content:
+            raise
+    if not conn_dropped:
+        tl.mark("stream_end", events=chunks, content_chars=sum(len(c) for c in content))
+        tl.finish("error" if err else "ok")
+    if err:
+        return {"error": {"message": err}}
+    finish = {"STOP": "stop", "MAX_TOKENS": "length"}.get(finish, finish)
+    if conn_dropped:
+        finish = finish or "connection_dropped"
+    return {
+        "model": model,
+        "usage": usage,
+        "choices": [{
+            "message": {"role": "assistant", "content": "".join(content)},
+            "finish_reason": finish,
+        }],
+    }
+
+
 def call_model(model, prompt, label, ep_dir=None):
     """Stream the completion (SSE) and reassemble an OpenAI-style response dict."""
     endpoint = MODELS.get(model, {}).get("endpoint")
@@ -430,6 +557,8 @@ def call_model(model, prompt, label, ep_dir=None):
         return call_model_responses(model, prompt, label, ep_dir)
     if endpoint == "messages":
         return call_model_messages(model, prompt, label, ep_dir)
+    if endpoint == "gemini":
+        return call_model_gemini(model, prompt, label, ep_dir)
     payload = {
         "model": model,
         "messages": [{"role": "user", "content": prompt}],

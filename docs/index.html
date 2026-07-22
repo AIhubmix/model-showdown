@@ -227,6 +227,27 @@
           poster: "media/posters/round5-b.png", game: "games/round5/b.html" },
       ],
     },
+    {
+      id: 6, title: `Round 6 · Global View`, episode: "ep13", cols: 2,
+      summary: `Build a live-data 3D flight-tracking dashboard as one self-contained HTML file —
+      dark-navy hero globe with a real day/night terminator, dual-layer atmosphere bloom, glowing
+      flight arcs, glassmorphic stat cards, a drag-to-orbit + scroll-to-zoom camera. Strict exposure
+      and glassmorphism spec attached, auto-demo required.`,
+      models: [
+        { letter: "a", name: `Kimi K3`, accent: "#38bdf8", cost: "$0.52", time: "16 min · 846 lines",
+          note: `Cheapest of the four, and the only one with zero interaction gaps — drag, wheel-zoom, and its own zoom buttons all just work. Clean terminator, if a touch flatter than the pricier builds.`,
+          poster: "media/posters/round6-a.png", game: "games/round6/a.html" },
+        { letter: "b", name: `GPT-5.6 Sol`, accent: "#a78bfa", cost: "$1.81", time: "14 min · 3887 lines",
+          note: `Priciest and longest by far — almost 3,900 lines chasing every checklist item, down to animated plane markers riding bezier flight paths. Never wired up scroll-wheel zoom, only its +/- buttons — our recording script had to route around that gap.`,
+          poster: "media/posters/round6-b.png", game: "games/round6/b.html" },
+        { letter: "c", name: `Claude Fable 5`, accent: "#f97316", cost: "$1.51", time: "5 min · 839 lines",
+          note: `Fastest of the paid builds — a fully dressed dashboard in 5 minutes, drag/wheel/buttons all functional out of the box. The globe overruns its allotted breathing room and pokes past the frame edge.`,
+          poster: "media/posters/round6-c.png", game: "games/round6/c.html" },
+        { letter: "d", name: `Gemini 3.6 Flash`, accent: "#34d399", cost: "$0.12", time: "1.3 min · 1314 lines",
+          note: `Absurdly cheap and fast — 75 seconds, 12 cents, still a legible glass-card layout. But its own 2D toggle and zoom buttons silently no-op: OrbitControls recomputes the camera every frame and overwrites whatever those handlers just set.`,
+          poster: "media/posters/round6-d.png", game: "games/round6/d.html" },
+      ],
+    },
   ];
 
   const roundsEl = document.getElementById("rounds");
@@ -247,7 +268,7 @@
 
     const grid = document.createElement("div");
     grid.className = "grid round-grid";
-    grid.style.setProperty("--cols", round.models.length);
+    grid.style.setProperty("--cols", round.cols || round.models.length);
     grid.id = "round-" + round.id + "-grid";
 
     round.models.forEach((m) => {

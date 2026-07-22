@@ -32,7 +32,7 @@ export type ShowdownProps = {
   outroFrames: number;
   audio?: string; // public/ relative path to an audio bed, e.g. "ep02/audio.wav"
   layout?: 'horizontal' | 'vertical' | 'fullbleed'; // 并排(默认) / 卡片上下堆叠 / 无边框拼接+浮动角标
-  fullbleedDir?: 'row' | 'col'; // fullbleed 专用：横条堆叠(默认，适配横屏内容) / 竖条并排(适配竖屏内容)
+  fullbleedDir?: 'row' | 'col' | 'grid2x2'; // fullbleed 专用：横条堆叠(默认，适配横屏内容) / 竖条并排(适配竖屏内容) / 2x2 田字格(4个横屏内容)
 };
 
 const BG = '#0b0e14';
@@ -183,18 +183,26 @@ const Panels: React.FC<ShowdownProps> = ({ models, tagline, layout = 'horizontal
     // 不占任何布局空间——录屏内容最大化（ep10 反馈）
     // fullbleedDir='row': 横条堆叠，适配横屏录屏（宽而扁的容器贴合 16:9 源）
     // fullbleedDir='col': 竖条并排，适配竖屏录屏（窄而高的容器贴合竖屏源，避免顶部/底部被裁掉）
+    // fullbleedDir='grid2x2': 2x2 田字格，4 个横屏内容两行两列铺满整屏
     const isCol = fullbleedDir === 'col';
-    const h = isCol ? height : height / n;
-    const w = isCol ? width / n : width;
+    const isGrid = fullbleedDir === 'grid2x2';
+    const h = isGrid ? height / 2 : isCol ? height : height / n;
+    const w = isGrid ? width / 2 : isCol ? width / n : width;
+    const posFor = (i: number) =>
+      isGrid
+        ? { top: Math.floor(i / 2) * h, left: (i % 2) * w }
+        : { top: isCol ? 0 : i * h, left: isCol ? i * w : 0 };
     return (
       <AbsoluteFill style={{ background: '#000' }}>
-        {models.map((m, i) => (
+        {models.map((m, i) => {
+          const { top, left } = posFor(i);
+          return (
           <div
             key={m.name}
             style={{
               position: 'absolute',
-              top: isCol ? 0 : i * h,
-              left: isCol ? i * w : 0,
+              top,
+              left,
               width: w,
               height: h,
               overflow: 'hidden',
@@ -207,7 +215,7 @@ const Panels: React.FC<ShowdownProps> = ({ models, tagline, layout = 'horizontal
               style={{ width: '100%', height: '100%', objectFit: 'cover',
             transform: `scale(${m.zoom ?? 1})`, transformOrigin: 'center center' }}
             />
-            {i > 0 ? (
+            {!isGrid && i > 0 ? (
               <div
                 style={
                   isCol
@@ -236,7 +244,14 @@ const Panels: React.FC<ShowdownProps> = ({ models, tagline, layout = 'horizontal
               <div style={{ color: MONEY, fontFamily: mono, fontWeight: 700, fontSize: 24 * s }}>{m.cost}</div>
             </div>
           </div>
-        ))}
+          );
+        })}
+        {isGrid ? (
+          <>
+            <div style={{ position: 'absolute', top: 0, bottom: 0, left: width / 2 - 1, width: 2, background: 'rgba(255,255,255,0.18)' }} />
+            <div style={{ position: 'absolute', left: 0, right: 0, top: height / 2 - 1, height: 2, background: 'rgba(255,255,255,0.18)' }} />
+          </>
+        ) : null}
       </AbsoluteFill>
     );
   }
