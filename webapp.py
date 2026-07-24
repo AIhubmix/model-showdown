@@ -24,7 +24,6 @@ import glob
 import html
 import json
 import os
-import queue
 import re
 import secrets
 import subprocess
@@ -37,6 +36,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import run_showdown  # noqa: E402  (for MODELS + API_KEY_ENV; import needs no key)
+import showdown_db as db  # noqa: E402  (MySQL via SHOWDOWN_DB_URL, else SQLite)
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 EPISODES_DIR = os.path.join(SCRIPT_DIR, "episodes")
@@ -48,6 +48,9 @@ CLERK_PK = os.environ.get("SHOWDOWN_CLERK_PK") or _web_cfg.get("clerk_publishabl
 SERVER_DOMAIN = (os.environ.get("SHOWDOWN_SERVER_DOMAIN")
                  or _web_cfg.get("server_domain", "https://aihubmix.com")).rstrip("/")
 GCS_BUCKET = os.environ.get("SHOWDOWN_GCS_BUCKET") or _web_cfg.get("gcs_bucket", "")
+# 反代前缀（如 SHOWDOWN_BASE_PATH=/showdown 挂在 playground.aihubmix.com/showdown/）；
+# 生成的所有站内 URL 带上 B，请求进来时剥掉再路由
+B = os.environ.get("SHOWDOWN_BASE_PATH", "").rstrip("/")
 CAPTION_MODEL = os.environ.get("SHOWDOWN_CAPTION_MODEL") or _web_cfg.get("caption_model", "gpt-4o-mini")
 
 # 参考图 → 生成 build prompt 的指令：核心是"还原"——布局/配色/材质/动效逐条钉死
@@ -62,9 +65,10 @@ The prompt you write must:
 
 Output just the prompt text, no preamble, no commentary."""
 
-JOBS = {}          # id -> job dict (manual keys held in memory only, never persisted)
-JOBS_LOCK = threading.Lock()
-JOB_QUEUE = queue.Queue()
+# 任务元数据在 DB（重启不丢）；粘贴的 sk-key 只驻内存 —— 安全设计使然，
+# 重启会丢 queued 手动任务的 key（recover_on_boot 会把它们标失败提示重提）
+SECRETS = {}       # job_id -> pasted key
+SECRETS_LOCK = threading.Lock()
 
 PROTO = {"responses": "OpenAI /v1/responses", "messages": "Anthropic /v1/messages",
          "gemini": "Google generateContent"}
@@ -230,7 +234,8 @@ CLERK_BOOT = """
 def page(title, body, refresh=None, head="", body_attrs=""):
     meta = f'<meta http-equiv="refresh" content="{refresh}">' if refresh else ""
     return f"""<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">{meta}{head}
+<meta name="viewport" content="width=device-width, initial-scale=1">{meta}
+<script>window.BASE={json.dumps(B)};</script>{head}
 <title>{html.escape(title)}</title><style>{CSS}</style></head><body{body_attrs}><div class="wrap">
 {body}</div></body></html>"""
 
@@ -452,11 +457,11 @@ KEY_SECTION_JS = """
     st.textContent = 'loading your keys…';
     const jwt = await clerk.session.getToken();
     // 品牌开关仅 role>=10(站方)可见；服务端提交时会用 JWT 再校验一次，前端只管展示
-    fetch('/api/user', { headers: { Authorization: 'Bearer ' + jwt } })
+    fetch(window.BASE + '/api/user', { headers: { Authorization: 'Bearer ' + jwt } })
       .then(r => r.json())
       .then(u => { if ((u.role || 0) >= 10) $('brand-row').hidden = false; })
       .catch(() => {});
-    const r = await fetch('/api/keys', { headers: { Authorization: 'Bearer ' + jwt } });
+    const r = await fetch(window.BASE + '/api/keys', { headers: { Authorization: 'Bearer ' + jwt } });
     if (!r.ok) { st.textContent = 'could not load keys (' + r.status + ') — paste a key instead'; setMode('manual'); return; }
     const keys = await r.json();
     if (!keys.length) { st.textContent = 'no keys on this account — create one in the console, or paste a key'; return; }
@@ -527,7 +532,7 @@ KEY_SECTION_JS = """
   });
   document.getElementById('model-search').addEventListener('input',
     (ev) => renderModels(ev.target.value));
-  fetch('/api/models').then(r => r.json()).then(ms => {
+  fetch(window.BASE + '/api/models').then(r => r.json()).then(ms => {
     MODELS = ms;
     ms.filter(m => m.default).forEach(m => checked.add(m.id));
     renderModels('');
@@ -580,7 +585,7 @@ KEY_SECTION_JS = """
       if (k) body.key = k;
     }
     try {
-      const r = await fetch('/api/caption', { method: 'POST',
+      const r = await fetch(window.BASE + '/api/caption', { method: 'POST',
         headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       const d = await r.json();
       if (!r.ok || !d.prompt) throw new Error(d.error || ('HTTP ' + r.status));
@@ -640,7 +645,7 @@ def create_form_html(prefill=""):
     server_key_hint = (" (server key configured — manual field may stay empty)"
                        if os.environ.get(KEY_ENV) else "")
     return f"""
-<div class="card" id="create"><form method="post" action="/submit" id="showdown-form">
+<div class="card" id="create"><form method="post" action="{B}/submit" id="showdown-form">
   <label>Models <span class="hint">live catalog (/api/v1/models) · tuned lineup pinned
   first · pick up to 4<span id="vision-note" hidden> · <b>ref images attached — models
   without image input are disabled</b></span></span></label>
@@ -696,13 +701,11 @@ def create_form_html(prefill=""):
 
 
 def home_html(prefill=""):
-    with JOBS_LOCK:
-        active = [j for j in sorted(JOBS.values(), key=lambda x: -x["created"])
-                  if j["status"] in ("queued", "running")]
+    active = [j for j in db.list_recent(20) if j["status"] in ("queued", "running")]
     active_html = ""
     if active:
         rows = "".join(
-            f'<tr><td><a href="/job/{j["id"]}">{j["id"]}</a></td>'
+            f'<tr><td><a href="{B}/job/{j["id"]}">{j["id"]}</a></td>'
             f'<td>{html.escape(j["title"])}</td>'
             f'<td><span class="tag {j["status"]}">{j["status"].upper()}</span></td></tr>'
             for j in active)
@@ -710,7 +713,7 @@ def home_html(prefill=""):
                        f"<table>{rows}</table></div>")
     cards = []
     for e in scan_episodes():
-        thumb = (f'<img src="/media/{e["id"]}/{e["poster"]}" loading="lazy" '
+        thumb = (f'<img src="{B}/media/{e["id"]}/{e["poster"]}" loading="lazy" '
                  f'alt="{html.escape(e["title"])} poster">' if e["poster"] else "")
         badges = ""
         if e["arena"]:
@@ -719,7 +722,7 @@ def home_html(prefill=""):
             badges += '<span class="tag web">WEB</span>'
         names = " · ".join(r["display"] for r in e["models"][:4])
         cards.append(f"""
-<a class="feed-card" href="/watch/{e["id"]}">
+<a class="feed-card" href="{B}/watch/{e["id"]}">
   <div class="thumb">{thumb}</div>
   <div class="body">
     <div class="t">{html.escape(e["title"])}</div>
@@ -784,15 +787,15 @@ def watch_html(e):
             "reasoning_share": f"{rt / ct * 100:.0f}%" if ct and rt else "—",
             "finish_reason": r.get("finish_reason"), "code_lines": r.get("code_lines"),
             "verdict": verdict,
-            "raw": f"/media/{e['id']}/raw_{m}.json"
+            "raw": f"{B}/media/{e['id']}/raw_{m}.json"
                    if os.path.exists(os.path.join(e["dir"], f"raw_{m}.json")) else None,
-            "artifact": f"/media/{e['id']}/work_{m}.html"
+            "artifact": f"{B}/media/{e['id']}/work_{m}.html"
                         if os.path.exists(os.path.join(e["dir"], f"work_{m}", "index.html")) else None,
         }
         works.append(f"""
 <div class="work" data-m="{m}" id="w-{i}" role="button" tabindex="0"
      aria-label="inspect {html.escape(r["display"])} details">
-  <video src="/media/{e["id"]}/{m}.webm" autoplay muted loop playsinline
+  <video src="{B}/media/{e["id"]}/{m}.webm" autoplay muted loop playsinline
          aria-label="{html.escape(r["display"])} artifact recording"></video>
   <div class="wh"><b><span class="dot" style="background:{accents[i % len(accents)]}"></span>
   {html.escape(r["display"])}</b><span class="cost">${r.get("cost_usd", 0):.2f} · {r.get("latency_s", 0):.0f}s</span></div>
@@ -819,7 +822,7 @@ def watch_html(e):
         gcs_html = ('<label style="display:flex;align-items:center;justify-content:space-between">'
                     f'Share <span style="display:flex;gap:8px">{share_btns}</span></label>'
                     '<div class="files">'
-                    + "".join(f'<a href="/media/{e["id"]}/{urllib.parse.quote(nm)}" download>'
+                    + "".join(f'<a href="{B}/media/{e["id"]}/{urllib.parse.quote(nm)}" download>'
                               f"⬇ {html.escape(nm)}</a>" for nm in vids)
                     + '</div><span class="hint" style="margin:0">download the mp4, attach it '
                     'when you post — videos are never exposed as public URLs</span>')
@@ -828,8 +831,8 @@ def watch_html(e):
                        if os.path.splitext(p)[1].lower() in (".png", ".jpg", ".jpeg", ".webp"))
     if ref_files:
         ref_html = ('<label>Reference images</label><div class="ref-previews">'
-                    + "".join(f'<span class="ref-item"><a href="/media/{e["id"]}/{nm}" target="_blank">'
-                              f'<img src="/media/{e["id"]}/{nm}" alt="{nm}"></a></span>'
+                    + "".join(f'<span class="ref-item"><a href="{B}/media/{e["id"]}/{nm}" target="_blank">'
+                              f'<img src="{B}/media/{e["id"]}/{nm}" alt="{nm}"></a></span>'
                               for nm in ref_files) + "</div>")
     common_rows = "".join(
         f"<div><span>{k}</span><span>{html.escape(str(v))}</span></div>"
@@ -840,7 +843,7 @@ def watch_html(e):
                      ("gateway", "AIHubMix (one gateway, one shot each)")])
     badges = ('<span class="tag arena">ARENA ROUND</span> ' if e["arena"] else "")
     return page(e["title"], f"""
-<div class="sub" style="margin-bottom:12px"><a href="/">← all runs</a></div>
+<div class="sub" style="margin-bottom:12px"><a href="{B}/">← all runs</a></div>
 <h1 style="font-size:26px">{html.escape(e["title"])}</h1>
 <div class="sub">{badges}click a work to inspect its params, response and wire protocol</div>
 <div class="watch">
@@ -850,7 +853,7 @@ def watch_html(e):
       <label style="display:flex;align-items:center;justify-content:space-between">Prompt
         <span style="display:flex;gap:8px">
           <button type="button" class="btn2" id="copy-prompt" style="padding:5px 12px;font-size:12.5px">Copy</button>
-          <a class="btn2" href="/?from={urllib.parse.quote(e["id"])}#create"
+          <a class="btn2" href="{B}/?from={urllib.parse.quote(e["id"])}#create"
              style="padding:5px 12px;font-size:12.5px">Remix ↗</a>
         </span>
       </label>
@@ -915,17 +918,19 @@ def job_html(job):
             f'<div class="sub">{html.escape(job["title"])} · '
             f'<span class="tag {st}">{st.upper()}</span></div>']
     if st == "done":
-        body.append(f'<div class="card">Done — <a href="/watch/web/{job["id"]}">watch it ↗</a> '
+        body.append(f'<div class="card">Done — <a href="{B}/watch/web/{job["id"]}">watch it ↗</a> '
                     f"or grab the share pack below.</div>")
     if job["auth_mode"] == "account" and st in ("queued", "running"):
         body.append('<div class="card" style="padding:14px 24px"><span class="hint" style="margin:0">'
                     'account-key job: keep this page open — it refreshes the short-lived '
                     'sign-in token the gateway needs (or resubmit with a pasted key for '
                     'unattended runs)</span></div>')
+    if st == "failed" and job.get("fail_reason"):
+        body.append(f'<div class="card" style="padding:14px 24px"><span class="hint" '
+                    f'style="margin:0;color:var(--ah-danger-text)">'
+                    f'{html.escape(job["fail_reason"])}</span></div>')
     if st == "queued":
-        with JOBS_LOCK:
-            ahead = sum(1 for j in JOBS.values()
-                        if j["status"] == "queued" and j["created"] < job["created"])
+        ahead = db.queued_ahead(job["created"])
         body.append(f'<div class="card">Position in queue: {ahead + 1} '
                     f"(jobs run one at a time — recording needs the GPU to itself)</div>")
     log_path = os.path.join(job["ep_dir"], "run.log")
@@ -939,15 +944,22 @@ def job_html(job):
     if st == "done":
         dist = os.path.join(job["ep_dir"], "dist")
         files = sorted(os.listdir(dist)) if os.path.isdir(dist) else []
-        links = "".join(f'<a href="/job/{job["id"]}/dl/{urllib.parse.quote(n)}">{html.escape(n)}</a>'
+        links = "".join(f'<a href="{B}/job/{job["id"]}/dl/{urllib.parse.quote(n)}">{html.escape(n)}</a>'
                         for n in files)
         body.append(f'<div class="card"><label>Share pack</label>'
                     f'<div class="files">{links}</div></div>')
-        if job.get("gcs"):
-            body.append('<div class="card" style="padding:14px 24px"><span class="hint" '
-                        'style="margin:0">archived to GCS (private bucket — videos are never '
-                        'exposed as public URLs)</span></div>')
-    body.append('<div class="sub"><a href="/">← home</a></div>')
+        meta_path = os.path.join(job["ep_dir"], "meta.json")
+        if os.path.exists(meta_path):
+            try:
+                with open(meta_path) as f:
+                    if json.load(f).get("gcs"):
+                        body.append('<div class="card" style="padding:14px 24px">'
+                                    '<span class="hint" style="margin:0">archived to GCS '
+                                    '(private bucket — videos are never exposed as public '
+                                    'URLs)</span></div>')
+            except ValueError:
+                pass
+    body.append(f'<div class="sub"><a href="{B}/">← home</a></div>')
     refresh = 5 if st in ("queued", "running") else None
     head = ""
     if job["auth_mode"] == "account" and st in ("queued", "running") and CLERK_PK:
@@ -957,7 +969,7 @@ def job_html(job):
   const clerk = await window._clerkReady;
   if (clerk?.user) {{
     const jwt = await clerk.session.getToken();
-    fetch('/job/{job["id"]}/token', {{ method: 'POST',
+    fetch('{B}/job/{job["id"]}/token', {{ method: 'POST',
       headers: {{ 'Content-Type': 'application/json' }},
       body: JSON.stringify({{ jwt }}) }});
   }}
@@ -999,18 +1011,20 @@ def write_auth_file(job, jwt):
 
 def worker():
     while True:
-        job_id = JOB_QUEUE.get()
-        with JOBS_LOCK:
-            job = JOBS[job_id]
-            job["status"] = "running"
+        job = db.claim_next()
+        if not job:
+            time.sleep(3)
+            continue
+        with SECRETS_LOCK:
+            key = SECRETS.get(job["id"])
         env = os.environ.copy()
         auth_path = None
         if job["auth_mode"] == "account":
             auth_path = os.path.join(job["ep_dir"], ".auth.json")
             env["SHOWDOWN_AUTH_FILE"] = auth_path
             env["SHOWDOWN_GATEWAY"] = f"{SERVER_DOMAIN}/v1/chat/completions"
-        elif job["key"]:
-            env[KEY_ENV] = job["key"]
+        elif key:
+            env[KEY_ENV] = key
         if job.get("extra_models"):
             env["SHOWDOWN_EXTRA_MODELS"] = json.dumps(job["extra_models"])
             env["SHOWDOWN_EXTRA_PRICING"] = json.dumps(job["extra_pricing"])
@@ -1020,23 +1034,32 @@ def worker():
                "--title", job["title"], "--formats", "wide,square"]
         if not job.get("brand"):
             cmd.append("--no-brand")
+        # 整段兜底：任何一步（含日志写入本身）异常都不能杀死 worker 线程，
+        # 也必须保证任务最终落到终态——否则重启前它会永远显示 running
+        ok, reason = False, "run failed — see log"
         try:
             with open(os.path.join(job["ep_dir"], "run.log"), "w") as log:
                 r = subprocess.run(cmd, stdout=log, stderr=subprocess.STDOUT,
                                    env=env, timeout=3 * 3600)
             ok = r.returncode == 0
         except Exception as e:  # noqa: BLE001
-            with open(os.path.join(job["ep_dir"], "run.log"), "a") as log:
-                log.write(f"\nworker error: {e}\n")
-            ok = False
+            reason = f"worker error: {str(e)[:180]}"
+            try:
+                with open(os.path.join(job["ep_dir"], "run.log"), "a") as log:
+                    log.write(f"\n{reason}\n")
+            except OSError:
+                pass
         finally:
             if auth_path and os.path.exists(auth_path):
                 os.remove(auth_path)
-        if ok and GCS_BUCKET:
-            job["gcs"] = upload_dist_to_gcs(job)
-        with JOBS_LOCK:
-            job["status"] = "done" if ok else "failed"
-            job["key"] = None  # key 用完即弃
+            with SECRETS_LOCK:
+                SECRETS.pop(job["id"], None)  # key 用完即弃
+        try:
+            if ok and GCS_BUCKET:
+                upload_dist_to_gcs(job)  # 结果落 meta.json，页面从那读
+        except Exception:  # noqa: BLE001
+            pass  # 归档失败不影响任务结果，本地 dist 仍可下载
+        db.set_status(job["id"], "done" if ok else "failed", None if ok else reason)
 
 
 def upload_dist_to_gcs(job):
@@ -1152,7 +1175,12 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(200, f.read(), MEDIA_TYPES[ext], extra)
         return self._send(404, "not found", "text/plain")
 
+    def _strip_base(self):
+        if B and self.path.startswith(B):
+            self.path = self.path[len(B):] or "/"
+
     def do_GET(self):
+        self._strip_base()
         url = urllib.parse.urlparse(self.path)
         parts = url.path.strip("/").split("/")
         if url.path in ("/", ""):
@@ -1187,8 +1215,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(404, page("Not found", "<h1>run not found</h1>"))
             return self._send(200, watch_html(e))
         if parts[0] == "job" and len(parts) >= 2:
-            with JOBS_LOCK:
-                job = JOBS.get(parts[1])
+            job = db.get(parts[1])
             if not job:
                 return self._send(404, page("Not found", "<h1>job not found</h1>"))
             if len(parts) == 2:
@@ -1209,6 +1236,7 @@ class Handler(BaseHTTPRequestHandler):
         return self._send(404, page("Not found", "<h1>404</h1>"))
 
     def do_POST(self):
+        self._strip_base()
         parts = self.path.strip("/").split("/")
         length = int(self.headers.get("Content-Length", 0))
         raw = self.rfile.read(length)
@@ -1257,8 +1285,7 @@ class Handler(BaseHTTPRequestHandler):
 
         # 任务页推新 JWT：只更新 jwt，token_id 以服务端任务记录为准（防篡改）
         if len(parts) == 3 and parts[0] == "job" and parts[2] == "token":
-            with JOBS_LOCK:
-                job = JOBS.get(parts[1])
+            job = db.get(parts[1])
             if not job or job["auth_mode"] != "account" or job["status"] not in ("queued", "running"):
                 return self._send(404, "{}", "application/json")
             try:
@@ -1325,15 +1352,16 @@ class Handler(BaseHTTPRequestHandler):
         job = {"id": job_id, "ep_dir": ep_dir, "models": ",".join(models),
                "seconds": seconds, "title": title, "status": "queued",
                "created": time.time(), "auth_mode": auth_mode,
-               "key": key or None, "token_id": token_id or None, "brand": brand,
+               "token_id": token_id or None, "brand": brand,
                "extra_models": extra_models, "extra_pricing": extra_pricing}
         if auth_mode == "account":
             write_auth_file(job, jwt)
-        with JOBS_LOCK:
-            JOBS[job_id] = job
-        JOB_QUEUE.put(job_id)
+        if key:
+            with SECRETS_LOCK:
+                SECRETS[job_id] = key
+        db.insert(job)
         self.send_response(303)
-        self.send_header("Location", f"/job/{job_id}")
+        self.send_header("Location", f"{B}/job/{job_id}")
         self.end_headers()
 
 
@@ -1344,6 +1372,8 @@ def main():
                     help="bind address; keep 127.0.0.1 unless you have auth in front")
     args = ap.parse_args()
     os.makedirs(WEB_EP_DIR, exist_ok=True)
+    db.init()
+    db.recover_on_boot(bool(os.environ.get(KEY_ENV)), SECRETS)
     threading.Thread(target=worker, daemon=True).start()
     srv = ThreadingHTTPServer((args.host, args.port), Handler)
     mode = f"account mode ON ({SERVER_DOMAIN})" if CLERK_PK else "manual keys only"
