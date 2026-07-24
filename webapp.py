@@ -44,10 +44,16 @@ WEB_EP_DIR = os.path.join(EPISODES_DIR, "web")
 KEY_ENV = run_showdown.API_KEY_ENV
 
 _web_cfg = run_showdown.CONFIG.get("web", {})
-CLERK_PK = os.environ.get("SHOWDOWN_CLERK_PK") or _web_cfg.get("clerk_publishable_key", "")
-SERVER_DOMAIN = (os.environ.get("SHOWDOWN_SERVER_DOMAIN")
-                 or _web_cfg.get("server_domain", "https://aihubmix.com")).rstrip("/")
-GCS_BUCKET = os.environ.get("SHOWDOWN_GCS_BUCKET") or _web_cfg.get("gcs_bucket", "")
+# env 哨兵值 "none"：显式关闭该能力（部署机不改仓库里的 config 文件）
+def _cfg(env_key, cfg_key, default=""):
+    v = os.environ.get(env_key) or _web_cfg.get(cfg_key, default)
+    return "" if v == "none" else v
+
+
+CLERK_PK = _cfg("SHOWDOWN_CLERK_PK", "clerk_publishable_key")
+SERVER_DOMAIN = _cfg("SHOWDOWN_SERVER_DOMAIN", "server_domain",
+                     "https://aihubmix.com").rstrip("/")
+GCS_BUCKET = _cfg("SHOWDOWN_GCS_BUCKET", "gcs_bucket")
 # 反代前缀（如 SHOWDOWN_BASE_PATH=/showdown 挂在 playground.aihubmix.com/showdown/）；
 # 生成的所有站内 URL 带上 B，请求进来时剥掉再路由
 B = os.environ.get("SHOWDOWN_BASE_PATH", "").rstrip("/")
