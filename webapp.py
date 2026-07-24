@@ -47,6 +47,7 @@ _web_cfg = run_showdown.CONFIG.get("web", {})
 CLERK_PK = os.environ.get("SHOWDOWN_CLERK_PK") or _web_cfg.get("clerk_publishable_key", "")
 SERVER_DOMAIN = (os.environ.get("SHOWDOWN_SERVER_DOMAIN")
                  or _web_cfg.get("server_domain", "https://aihubmix.com")).rstrip("/")
+GCS_BUCKET = os.environ.get("SHOWDOWN_GCS_BUCKET") or _web_cfg.get("gcs_bucket", "")
 
 JOBS = {}          # id -> job dict (manual keys held in memory only, never persisted)
 JOBS_LOCK = threading.Lock()
@@ -204,6 +205,78 @@ def lineup_models():
             for mid, cfg in run_showdown.MODELS.items()]
 
 
+# ---------- model catalog (playground 同源：/api/v1/models?type=llm) ----------
+
+_CATALOG = {"ts": 0.0, "rows": []}
+_CATALOG_LOCK = threading.Lock()
+MODEL_ID_RE = re.compile(r"^[A-Za-z0-9._:/-]{1,80}$")
+
+
+def infer_endpoint(row):
+    """playground catalog.ts inferNative 同款：claude_api→messages，
+    responses→/v1/responses，其余走 chat/completions（返回 None=默认协议）。"""
+    eps = [t.strip().lower() for t in str(row.get("endpoints") or "").split(",")]
+    mid = str(row.get("model_id") or "").lower()
+    if "claude_api" in eps or "claude" in mid:
+        return "messages"
+    if "responses" in eps or "responses_api" in eps:
+        return "responses"
+    return None
+
+
+def get_catalog():
+    """LLM 目录，10 分钟缓存。接口挂了返回上次结果/空表（picker 退化为内置模型）。"""
+    with _CATALOG_LOCK:
+        if time.time() - _CATALOG["ts"] < 600 and _CATALOG["rows"]:
+            return _CATALOG["rows"]
+    try:
+        req = urllib.request.Request(f"{SERVER_DOMAIN}/api/v1/models?type=llm&sort_by=order")
+        with urllib.request.urlopen(req, timeout=15) as r:
+            rows = (json.load(r).get("data")) or []
+    except Exception:  # noqa: BLE001
+        return _CATALOG["rows"]
+    out = []
+    for row in rows:
+        mid = row.get("model_id") or row.get("id")
+        if not mid or mid == "auto" or not MODEL_ID_RE.match(mid):
+            continue
+        pricing = row.get("pricing") or {}
+        out.append({"id": mid,
+                    "name": row.get("model_name") or row.get("name") or mid,
+                    "endpoint": infer_endpoint(row),
+                    "max_output": int(row.get("max_output") or 0),
+                    "input": float(pricing.get("input") or row.get("input_price") or 0),
+                    "output": float(pricing.get("output") or row.get("output_price") or 0)})
+    with _CATALOG_LOCK:
+        if out:
+            _CATALOG.update(ts=time.time(), rows=out)
+    return _CATALOG["rows"]
+
+
+def picker_models():
+    """配置内模型置顶（带调优参数，默认阵容预选），目录其余模型可搜索追加。"""
+    conf, seen = [], set()
+    for mid, cfg in run_showdown.MODELS.items():
+        pin, pout = run_showdown.PRICING.get(mid, (0, 0))
+        conf.append({"id": mid, "name": cfg.get("display", mid), "configured": True,
+                     "default": cfg.get("lineup", True) is not False,
+                     "input": pin, "output": pout})
+        seen.add(mid)
+    return conf + [m for m in get_catalog() if m["id"] not in seen]
+
+
+def catalog_model_cfg(mid):
+    """为目录选出的非内置模型生成 run_showdown 临时配置 + 牌价。"""
+    m = next((x for x in get_catalog() if x["id"] == mid), None)
+    if not m:
+        return None, None
+    cfg = {"display": m["name"],
+           "max_tokens": min(m["max_output"], 128000) or 60000}
+    if m["endpoint"]:
+        cfg["endpoint"] = m["endpoint"]
+    return cfg, (m["input"], m["output"])
+
+
 # ---------- episode index ----------
 
 def load_results(ep_dir):
@@ -328,8 +401,20 @@ KEY_SECTION_JS = """
   }
   initAccount();
 
+  // 搜索过滤会把已勾选但不在当前列表里的模型移出 DOM —— 提交前从 checked 集合
+  // 统一注入 hidden inputs，可见 checkbox 全部 disable 防重复
+  function syncModels(form) {
+    form.querySelectorAll('input.m-hidden').forEach(n => n.remove());
+    form.querySelectorAll('#model-list input[type=checkbox]').forEach(cb => { cb.disabled = true; });
+    checked.forEach(id => {
+      const inp = document.createElement('input');
+      inp.type = 'hidden'; inp.name = 'models'; inp.value = id; inp.className = 'm-hidden';
+      form.appendChild(inp);
+    });
+  }
   document.getElementById('showdown-form').addEventListener('submit', async (e) => {
-    if (authMode !== 'account') return;           // manual: plain POST
+    syncModels(e.target);
+    if (authMode !== 'account') return;           // manual: plain POST（带 hidden inputs）
     e.preventDefault();
     const clerk = window._clerk;
     if (!clerk?.user) { alert('sign in first, or switch to "Paste a key"'); return; }
@@ -337,24 +422,56 @@ KEY_SECTION_JS = """
     document.getElementById('f-jwt').value = await clerk.session.getToken();
     e.target.submit();
   });
+
+  // ---- model picker: live catalog + search, tuned lineup pinned & pre-checked ----
+  const MAX_PICK = 4;
+  const list = $('model-list');
+  let MODELS = [];
+  const checked = new Set();
+  function renderModels(q) {
+    q = (q || '').toLowerCase();
+    const vis = MODELS.filter(m => !q || m.id.toLowerCase().includes(q) ||
+                                    m.name.toLowerCase().includes(q)).slice(0, 60);
+    list.innerHTML = vis.map(m => `
+      <label class="model-opt"><input type="checkbox" name="models" value="${m.id}"
+        ${checked.has(m.id) ? 'checked' : ''}> ${m.name}
+        <code>${m.id}${m.input || m.output ? ` · $${m.input}/${m.output}` : ''}</code></label>`
+    ).join('') || '<span class="hint" style="margin:0">no match</span>';
+  }
+  list.addEventListener('change', (ev) => {
+    const cb = ev.target;
+    if (cb.checked && checked.size >= MAX_PICK) {
+      cb.checked = false;
+      alert(`pick at most ${MAX_PICK} models per run`);
+      return;
+    }
+    cb.checked ? checked.add(cb.value) : checked.delete(cb.value);
+  });
+  document.getElementById('model-search').addEventListener('input',
+    (ev) => renderModels(ev.target.value));
+  fetch('/api/models').then(r => r.json()).then(ms => {
+    MODELS = ms;
+    ms.filter(m => m.default).forEach(m => checked.add(m.id));
+    renderModels('');
+  }).catch(() => { list.innerHTML = '<span class="hint" style="margin:0">catalog unavailable</span>'; });
 </script>
 """
 
 
-def create_form_html():
-    opts = "".join(
-        f'<label class="model-opt"><input type="checkbox" name="models" value="{mid}"'
-        f'{" checked" if default else ""}> {html.escape(disp)} <code>{mid}</code></label>'
-        for mid, disp, default in lineup_models())
+def create_form_html(prefill=""):
     server_key_hint = (" (server key configured — manual field may stay empty)"
                        if os.environ.get(KEY_ENV) else "")
     return f"""
-<div class="card"><form method="post" action="/submit" id="showdown-form">
+<div class="card" id="create"><form method="post" action="/submit" id="showdown-form">
   <label>Prompt <span class="hint">what should every model build? single-file HTML
   with an auto-demo works best</span></label>
-  <textarea name="prompt" required placeholder="Build a playable ... as one self-contained HTML file ..."></textarea>
-  <label>Models</label>
-  <div class="models">{opts}</div>
+  <textarea name="prompt" required placeholder="Build a playable ... as one self-contained HTML file ...">{html.escape(prefill)}</textarea>
+  <label>Models <span class="hint">live catalog (/api/v1/models) · tuned lineup pinned
+  first · pick up to 4</span></label>
+  <input type="text" id="model-search" placeholder="search models…" autocomplete="off">
+  <div class="models" id="model-list" style="max-height:264px;overflow:auto;margin-top:8px">
+    <span class="hint" style="margin:0">loading catalog…</span>
+  </div>
   <div class="row">
     <div><label>Title <span class="hint">shown on the scoreboard</span></label>
     <input type="text" name="title" placeholder="Model Showdown"></div>
@@ -383,7 +500,7 @@ def create_form_html():
 </form></div>"""
 
 
-def home_html():
+def home_html(prefill=""):
     with JOBS_LOCK:
         active = [j for j in sorted(JOBS.values(), key=lambda x: -x["created"])
                   if j["status"] in ("queued", "running")]
@@ -420,7 +537,7 @@ def home_html():
 <h1>Model Showdown</h1>
 <div class="sub">Same prompt · one shot each · real costs — generate a publish-ready
 side-by-side comparison, then browse every run below. All models served via AIHubMix.</div>
-{create_form_html()}
+{create_form_html(prefill)}
 {active_html}
 <h2>Runs</h2>
 <div class="feed">{"".join(cards) or '<div class="sub">nothing yet — create the first one above</div>'}</div>
@@ -484,6 +601,21 @@ def watch_html(e):
 </div>""")
     n = len(works)
     cols = 2 if n >= 2 else 1
+    gcs_html = ""
+    meta_path = os.path.join(e["dir"], "meta.json")
+    if os.path.exists(meta_path):
+        try:
+            with open(meta_path) as f:
+                gcs = json.load(f).get("gcs") or {}
+            vids = [(nm, u) for nm, u in gcs.get("files", []) if nm.endswith(".mp4")]
+            if vids:
+                gcs_html = ('<label>Share <span class="hint">public GCS URLs</span></label>'
+                            '<div class="files">'
+                            + "".join(f'<a href="{u}" target="_blank" rel="noopener">'
+                                      f"{html.escape(nm)} ↗</a>" for nm, u in vids)
+                            + "</div>")
+        except ValueError:
+            pass
     common_rows = "".join(
         f"<div><span>{k}</span><span>{html.escape(str(v))}</span></div>"
         for k, v in [("episode", e["id"]), ("models", n),
@@ -500,10 +632,17 @@ def watch_html(e):
   <div class="works" style="grid-template-columns:repeat({cols},1fr)">{"".join(works)}</div>
   <div class="side">
     <div class="card">
-      <label>Prompt</label>
-      <pre class="prompt">{html.escape(prompt_text) or "—"}</pre>
+      <label style="display:flex;align-items:center;justify-content:space-between">Prompt
+        <span style="display:flex;gap:8px">
+          <button type="button" class="btn2" id="copy-prompt" style="padding:5px 12px;font-size:12.5px">Copy</button>
+          <a class="btn2" href="/?from={urllib.parse.quote(e["id"])}#create"
+             style="padding:5px 12px;font-size:12.5px">Remix ↗</a>
+        </span>
+      </label>
+      <pre class="prompt" id="prompt-text">{html.escape(prompt_text) or "—"}</pre>
       <label>Run</label>
       <div class="kv">{common_rows}</div>
+      {gcs_html}
     </div>
     <div class="card" id="sel-card">
       <label>Selected work <span class="hint">click a video on the left</span></label>
@@ -541,6 +680,11 @@ def watch_html(e):
   }}
   works.forEach(w => w.addEventListener('click', () => select(w)));
   if (works.length) select(works[0]);
+  document.getElementById('copy-prompt').addEventListener('click', async (ev) => {{
+    await navigator.clipboard.writeText(document.getElementById('prompt-text').textContent);
+    ev.target.textContent = 'Copied ✓';
+    setTimeout(() => {{ ev.target.textContent = 'Copy'; }}, 1500);
+  }});
 </script>""")
 
 
@@ -578,6 +722,11 @@ def job_html(job):
                         for n in files)
         body.append(f'<div class="card"><label>Share pack</label>'
                     f'<div class="files">{links}</div></div>')
+        if job.get("gcs"):
+            gcs_links = "".join(f'<a href="{u}" target="_blank" rel="noopener">{html.escape(n)} ↗</a>'
+                                for n, u in job["gcs"])
+            body.append(f'<div class="card"><label>GCS <span class="hint">public URLs — '
+                        f'paste anywhere</span></label><div class="files">{gcs_links}</div></div>')
     body.append('<div class="sub"><a href="/">← home</a></div>')
     refresh = 5 if st in ("queued", "running") else None
     head = ""
@@ -620,6 +769,9 @@ def worker():
             env["SHOWDOWN_GATEWAY"] = f"{SERVER_DOMAIN}/v1/chat/completions"
         elif job["key"]:
             env[KEY_ENV] = job["key"]
+        if job.get("extra_models"):
+            env["SHOWDOWN_EXTRA_MODELS"] = json.dumps(job["extra_models"])
+            env["SHOWDOWN_EXTRA_PRICING"] = json.dumps(job["extra_pricing"])
         cmd = [sys.executable, os.path.join(SCRIPT_DIR, "showdown.py"), job["ep_dir"],
                "--task", os.path.join(job["ep_dir"], "task.md"),
                "--models", job["models"], "--seconds", str(job["seconds"]),
@@ -636,9 +788,44 @@ def worker():
         finally:
             if auth_path and os.path.exists(auth_path):
                 os.remove(auth_path)
+        if ok and GCS_BUCKET:
+            job["gcs"] = upload_dist_to_gcs(job)
         with JOBS_LOCK:
             job["status"] = "done" if ok else "failed"
             job["key"] = None  # key 用完即弃
+
+
+def upload_dist_to_gcs(job):
+    """成片分享包上传 GCS（公开可读 bucket），返回 [(name, public_url)]。
+    失败不影响任务状态——本地 dist 仍可下载，错误记进 run.log。"""
+    dist = os.path.join(job["ep_dir"], "dist")
+    files = sorted(f for f in os.listdir(dist)) if os.path.isdir(dist) else []
+    if not files:
+        return []
+    dest = f"gs://{GCS_BUCKET}/runs/{job['id']}/"
+    r = subprocess.run(["gcloud", "storage", "cp"]
+                       + [os.path.join(dist, f) for f in files] + [dest],
+                       capture_output=True, text=True, timeout=600)
+    with open(os.path.join(job["ep_dir"], "run.log"), "a") as log:
+        if r.returncode != 0:
+            log.write(f"\n[gcs] upload FAILED: {r.stderr[-500:]}\n")
+            return []
+        log.write(f"\n[gcs] uploaded {len(files)} files to {dest}\n")
+    urls = [(f, f"https://storage.googleapis.com/{GCS_BUCKET}/runs/{job['id']}/"
+                f"{urllib.parse.quote(f)}") for f in files]
+    # 落到 meta.json，重启后 watch 页仍能取到
+    meta_path = os.path.join(job["ep_dir"], "meta.json")
+    meta = {}
+    if os.path.exists(meta_path):
+        try:
+            with open(meta_path) as f:
+                meta = json.load(f)
+        except ValueError:
+            pass
+    meta["gcs"] = {"bucket": GCS_BUCKET, "files": urls}
+    with open(meta_path, "w") as f:
+        json.dump(meta, f, ensure_ascii=False)
+    return urls
 
 
 # ---------- http ----------
@@ -710,13 +897,26 @@ class Handler(BaseHTTPRequestHandler):
         return self._send(404, "not found", "text/plain")
 
     def do_GET(self):
-        parts = self.path.split("?")[0].strip("/").split("/")
-        if self.path == "/" or self.path == "":
-            return self._send(200, home_html())
+        url = urllib.parse.urlparse(self.path)
+        parts = url.path.strip("/").split("/")
+        if url.path in ("/", ""):
+            # Remix：/?from=<ep-id> 把该期 prompt 预填进创建表单
+            prefill = ""
+            src = (urllib.parse.parse_qs(url.query).get("from") or [""])[0]
+            if src:
+                e = find_episode(src)
+                task = os.path.join(e["dir"], "task.md") if e else None
+                if task and os.path.exists(task):
+                    with open(task) as f:
+                        prefill = f.read().strip()
+            return self._send(200, home_html(prefill))
         if parts[0] == "healthz":
             return self._send(200, "ok", "text/plain")
         if parts[0] == "api" and len(parts) == 2 and parts[1] == "keys":
             return self._proxy_keys()
+        if parts[0] == "api" and len(parts) == 2 and parts[1] == "models":
+            return self._send(200, json.dumps(picker_models()), "application/json",
+                              {"Cache-Control": "max-age=300"})
         if parts[0] == "media" and len(parts) >= 3:
             return self._media(parts[1:])
         if parts[0] == "watch" and len(parts) >= 2:
@@ -765,7 +965,16 @@ class Handler(BaseHTTPRequestHandler):
         form = urllib.parse.parse_qs(raw.decode())
         get = lambda k: (form.get(k) or [""])[0].strip()  # noqa: E731
         prompt = get("prompt")
-        models = [m for m in form.get("models", []) if m in run_showdown.MODELS]
+        extra_models, extra_pricing, models = {}, {}, []
+        for m in dict.fromkeys(form.get("models", [])):  # 去重保序
+            if m in run_showdown.MODELS:
+                models.append(m)
+            elif MODEL_ID_RE.match(m):
+                cfg, price = catalog_model_cfg(m)
+                if cfg:  # 目录里查得到才接受，防任意 id 注入
+                    models.append(m)
+                    extra_models[m] = cfg
+                    extra_pricing[m] = list(price)
         key, token_id, jwt = get("api_key"), get("token_id"), get("jwt")
         title = get("title") or "Model Showdown"
         try:
@@ -788,7 +997,8 @@ class Handler(BaseHTTPRequestHandler):
         job = {"id": job_id, "ep_dir": ep_dir, "models": ",".join(models),
                "seconds": seconds, "title": title, "status": "queued",
                "created": time.time(), "auth_mode": auth_mode,
-               "key": key or None, "token_id": token_id or None}
+               "key": key or None, "token_id": token_id or None,
+               "extra_models": extra_models, "extra_pricing": extra_pricing}
         if auth_mode == "account":
             write_auth_file(job, jwt)
         with JOBS_LOCK:

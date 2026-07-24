@@ -144,6 +144,10 @@ MODELS = {
 # config 里的 models/pricing 是对内置表的覆盖/追加（key 相同则整条替换）
 PRICING.update({k: tuple(v) for k, v in CONFIG.get("pricing", {}).items()})
 MODELS.update(CONFIG.get("models", {}))
+# webapp 从模型目录接口(/api/v1/models)动态选出的临时模型经 env 注入，仅本进程有效
+MODELS.update(json.loads(os.environ.get("SHOWDOWN_EXTRA_MODELS") or "{}"))
+PRICING.update({k: tuple(v) for k, v in
+                json.loads(os.environ.get("SHOWDOWN_EXTRA_PRICING") or "{}").items()})
 DEFAULT_MAX_TOKENS = 60000
 
 REQUEST_TIMEOUT_S = 3600  # per socket read while streaming
