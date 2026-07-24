@@ -227,11 +227,11 @@ CLERK_BOOT = """
 """
 
 
-def page(title, body, refresh=None, head=""):
+def page(title, body, refresh=None, head="", body_attrs=""):
     meta = f'<meta http-equiv="refresh" content="{refresh}">' if refresh else ""
     return f"""<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">{meta}{head}
-<title>{html.escape(title)}</title><style>{CSS}</style></head><body><div class="wrap">
+<title>{html.escape(title)}</title><style>{CSS}</style></head><body{body_attrs}><div class="wrap">
 {body}</div></body></html>"""
 
 
@@ -301,6 +301,22 @@ def picker_models():
                      "input": pin, "output": pout})
         seen.add(mid)
     return conf + [m for m in get_catalog() if m["id"] not in seen]
+
+
+def fetch_role(jwt):
+    """playground 同源用户接口(/call/usr/self)取 role。取不到一律按 0（无特权）。"""
+    req = urllib.request.Request(f"{SERVER_DOMAIN}/call/usr/self",
+                                 headers={"Authorization": f"Bearer {jwt}"})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            body = json.load(r)
+        data = body.get("data") or body
+        return int(data.get("role") or 0)
+    except Exception:  # noqa: BLE001
+        return 0
+
+
+BRAND_MIN_ROLE = 10  # 站方人员起（one-api 语义：10=admin, 100=root）
 
 
 def catalog_model_cfg(mid):
@@ -414,6 +430,13 @@ KEY_SECTION_JS = """
   $('tab-account').onclick = () => setMode('account');
   $('tab-manual').onclick = () => setMode('manual');
 
+  // 本机 operator 部署（配置了服务器 env key，如本地自用）直接放开品牌开关；
+  // 公网部署不应配置服务器 env key
+  if (document.body.dataset.operator === '1') {
+    const br = document.getElementById('brand-row');
+    if (br) br.hidden = false;
+  }
+
   async function initAccount() {
     const st = $('acct-status');
     if (!window._clerkReady) { st.textContent = 'account mode is not configured on this deployment — paste a key instead'; setMode('manual'); return; }
@@ -428,6 +451,11 @@ KEY_SECTION_JS = """
     }
     st.textContent = 'loading your keys…';
     const jwt = await clerk.session.getToken();
+    // 品牌开关仅 role>=10(站方)可见；服务端提交时会用 JWT 再校验一次，前端只管展示
+    fetch('/api/user', { headers: { Authorization: 'Bearer ' + jwt } })
+      .then(r => r.json())
+      .then(u => { if ((u.role || 0) >= 10) $('brand-row').hidden = false; })
+      .catch(() => {});
     const r = await fetch('/api/keys', { headers: { Authorization: 'Bearer ' + jwt } });
     if (!r.ok) { st.textContent = 'could not load keys (' + r.status + ') — paste a key instead'; setMode('manual'); return; }
     const keys = await r.json();
@@ -655,6 +683,12 @@ def create_form_html(prefill=""):
   <div id="pane-manual" hidden>
     <input type="password" name="api_key" autocomplete="off" placeholder="sk-...">
   </div>
+  <div id="brand-row" hidden>
+    <label class="model-opt" style="width:fit-content;margin-top:16px">
+      <input type="checkbox" name="brand" value="on" checked> Brand logo &amp; watermark
+      <span class="hint">staff only — UGC runs never carry the logo</span>
+    </label>
+  </div>
   <input type="hidden" name="token_id" id="f-token-id">
   <input type="hidden" name="jwt" id="f-jwt">
   <button class="btn" type="submit">Run the showdown</button>
@@ -702,7 +736,8 @@ side-by-side comparison, then browse every run below. All models served via AIHu
 {active_html}
 <h2>Runs</h2>
 <div class="feed">{"".join(cards) or '<div class="sub">nothing yet — create the first one above</div>'}</div>
-{KEY_SECTION_JS}""", head=head)
+{KEY_SECTION_JS}""", head=head,
+                body_attrs=' data-operator="1"' if os.environ.get(KEY_ENV) else "")
 
 
 def watch_html(e):
@@ -983,6 +1018,8 @@ def worker():
                "--task", os.path.join(job["ep_dir"], "task.md"),
                "--models", job["models"], "--seconds", str(job["seconds"]),
                "--title", job["title"], "--formats", "wide,square"]
+        if not job.get("brand"):
+            cmd.append("--no-brand")
         try:
             with open(os.path.join(job["ep_dir"], "run.log"), "w") as log:
                 r = subprocess.run(cmd, stdout=log, stderr=subprocess.STDOUT,
@@ -1136,6 +1173,12 @@ class Handler(BaseHTTPRequestHandler):
         if parts[0] == "api" and len(parts) == 2 and parts[1] == "models":
             return self._send(200, json.dumps(picker_models()), "application/json",
                               {"Cache-Control": "max-age=300"})
+        if parts[0] == "api" and len(parts) == 2 and parts[1] == "user":
+            jwt = self.headers.get("Authorization", "")
+            if not jwt.startswith("Bearer "):
+                return self._send(401, '{"role":0}', "application/json")
+            return self._send(200, json.dumps({"role": fetch_role(jwt[7:])}),
+                              "application/json")
         if parts[0] == "media" and len(parts) >= 3:
             return self._media(parts[1:])
         if parts[0] == "watch" and len(parts) >= 2:
@@ -1258,6 +1301,15 @@ class Handler(BaseHTTPRequestHandler):
         if auth_mode == "manual" and not key and not os.environ.get(KEY_ENV):
             return self._send(400, page("Invalid",
                 f"<h1>no key: sign in and pick one, paste one, or set {KEY_ENV} on the server</h1>"))
+        # 品牌露出白名单：UGC 内容合法性不可控，logo/水印默认不带。
+        # 开关只对 role>=10(账户模式,服务端用 JWT 复核) 或本机 operator(服务器
+        # env key,未粘贴外部 key) 生效——前端 checkbox 不可信，这里是唯一裁决点
+        brand = False
+        if get("brand") == "on":
+            if auth_mode == "account":
+                brand = fetch_role(jwt) >= BRAND_MIN_ROLE
+            elif not key and os.environ.get(KEY_ENV):
+                brand = True
         job_id = time.strftime("%m%d-%H%M%S") + "-" + secrets.token_hex(3)
         ep_dir = os.path.join(WEB_EP_DIR, job_id)
         os.makedirs(ep_dir, exist_ok=True)
@@ -1273,7 +1325,7 @@ class Handler(BaseHTTPRequestHandler):
         job = {"id": job_id, "ep_dir": ep_dir, "models": ",".join(models),
                "seconds": seconds, "title": title, "status": "queued",
                "created": time.time(), "auth_mode": auth_mode,
-               "key": key or None, "token_id": token_id or None,
+               "key": key or None, "token_id": token_id or None, "brand": brand,
                "extra_models": extra_models, "extra_pricing": extra_pricing}
         if auth_mode == "account":
             write_auth_file(job, jwt)

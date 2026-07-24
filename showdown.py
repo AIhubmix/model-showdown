@@ -63,7 +63,7 @@ def load_results(ep_dir):
     return results
 
 
-def write_post_md(ep_dir, title, results, models_arg):
+def write_post_md(ep_dir, title, results, models_arg, brand=True):
     ep = os.path.basename(ep_dir)
     by_cost = sorted(results, key=lambda r: r["cost_usd"])
     names = [r["display"] for r in results]
@@ -88,7 +88,7 @@ The bill: {bill}
 
 Cheapest run: {cheapest}. Full prompt + metrics in the thread.
 
-{WATERMARK} — arena: {GALLERY}
+{(WATERMARK + " — arena: " + GALLERY) if brand else ""}
 
 ## Reddit（r/LocalLLaMA 风格：数据 + 方法论 + 可复现，不做产品推销）
 
@@ -109,7 +109,7 @@ Prompt and per-model metrics are attached; reproduce with:
 {repro}
 ```
 
-Blind-vote version of this round (no model names until you vote): {GALLERY}
+{("Blind-vote version of this round (no model names until you vote): " + GALLERY) if brand else ""}
 
 ## 复现命令
 
@@ -137,6 +137,9 @@ def main():
                     help=f"comma list of {'/'.join(FORMATS)}")
     ap.add_argument("--skip-gen", action="store_true",
                     help="episode already generated+recorded; post-production only")
+    ap.add_argument("--no-brand", action="store_true",
+                    help="strip logo/tagline/watermark from the video and post.md "
+                         "(UGC 内容合法性不可控，品牌露出仅限受信任任务)")
     args = ap.parse_args()
 
     formats = [x.strip() for x in args.formats.split(",") if x.strip()]
@@ -193,6 +196,9 @@ def main():
                      ep_dir, title, subtitle], capture=True)
     props = json.loads(props_json)
     props["playFrames"] = play_frames
+    if args.no_brand:
+        props["tagline"] = ""    # BrandBar 以 tagline 为开关，置空即整条不渲染
+        props["watermark"] = ""
     props_path = os.path.join(VIDEO_DIR, "props.json")
     with open(props_path, "w") as f:
         json.dump(props, f, ensure_ascii=False, indent=1)
@@ -211,7 +217,7 @@ def main():
         shutil.copy2(p, dist)
     if os.path.exists(f"{ep_dir}/metrics.json"):
         shutil.copy2(f"{ep_dir}/metrics.json", dist)
-    write_post_md(ep_dir, title, results, models_arg)
+    write_post_md(ep_dir, title, results, models_arg, brand=not args.no_brand)
 
     print(f"\nshare pack ready: {dist}")
     for name in sorted(os.listdir(dist)):
