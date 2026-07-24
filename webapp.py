@@ -136,6 +136,18 @@ a { color:var(--ah-primary); text-decoration:none; }
 a:hover { color:var(--ah-primary-hover); }
 .files a { display:inline-block; margin:4px 12px 4px 0; font-family:var(--ah-font-mono); font-size:13px; }
 .acct-line { display:flex; align-items:center; gap:12px; font-size:14px; }
+.dropzone { border:1.5px dashed var(--ah-border-strong); border-radius:8px; padding:14px;
+  cursor:pointer; transition:border-color 120ms var(--ah-ease), background 120ms var(--ah-ease); }
+.dropzone.over { border-color:var(--ah-primary); background:rgba(37,99,235,0.05); }
+.ref-previews { display:flex; gap:10px; flex-wrap:wrap; }
+.ref-previews:not(:empty) { margin-top:10px; }
+.ref-item { position:relative; }
+.ref-item img { width:88px; height:88px; object-fit:cover; border-radius:8px;
+  border:1px solid var(--ah-border); display:block; }
+.ref-item button { position:absolute; top:-7px; right:-7px; width:20px; height:20px;
+  border-radius:50%; border:0; background:var(--ah-fg-2); color:#fff; font-size:12px;
+  line-height:1; cursor:pointer; }
+.model-opt.novision { opacity:0.38; pointer-events:none; }
 
 /* ---------- feed ---------- */
 .feed { display:grid; grid-template-columns:repeat(auto-fill,minmax(240px,1fr)); gap:16px; }
@@ -241,10 +253,12 @@ def get_catalog():
         if not mid or mid == "auto" or not MODEL_ID_RE.match(mid):
             continue
         pricing = row.get("pricing") or {}
+        modalities = str(row.get("input_modalities") or row.get("modalities") or "")
         out.append({"id": mid,
                     "name": row.get("model_name") or row.get("name") or mid,
                     "endpoint": infer_endpoint(row),
                     "max_output": int(row.get("max_output") or 0),
+                    "image": "image" in modalities.lower(),
                     "input": float(pricing.get("input") or row.get("input_price") or 0),
                     "output": float(pricing.get("output") or row.get("output_price") or 0)})
     with _CATALOG_LOCK:
@@ -260,6 +274,7 @@ def picker_models():
         pin, pout = run_showdown.PRICING.get(mid, (0, 0))
         conf.append({"id": mid, "name": cfg.get("display", mid), "configured": True,
                      "default": cfg.get("lineup", True) is not False,
+                     "image": True,  # 内置阵容都验证过多模态 ref 图链路
                      "input": pin, "output": pout})
         seen.add(mid)
     return conf + [m for m in get_catalog() if m["id"] not in seen]
@@ -454,6 +469,70 @@ KEY_SECTION_JS = """
     ms.filter(m => m.default).forEach(m => checked.add(m.id));
     renderModels('');
   }).catch(() => { list.innerHTML = '<span class="hint" style="margin:0">catalog unavailable</span>'; });
+
+  // ---- reference images: drag & drop / paste / browse -> base64 hidden inputs ----
+  // （playground 同思路：客户端 FileReader 转 base64 dataURL，随请求体走）
+  const MAX_REFS = 3, MAX_REF_MB = 6;
+  const refs = [];   // dataURL strings
+  const dz = $('dropzone'), previews = $('ref-previews'), fileInput = $('ref-file');
+  function renderRefs() {
+    previews.innerHTML = refs.map((d, i) => `
+      <span class="ref-item"><img src="${d}" alt="ref ${i}">
+        <button type="button" data-i="${i}" title="remove">×</button></span>`).join('');
+    $('drop-hint').textContent = refs.length
+      ? `${refs.length}/${MAX_REFS} attached — drop/paste/click to add more`
+      : 'drop images here, paste, or click to browse';
+    $('vision-note').hidden = !refs.length;
+    renderModels($('model-search').value);   // 有参考图时置灰非视觉模型
+  }
+  const origRender = renderModels;
+  renderModels = function(q) {
+    origRender(q);
+    if (!refs.length) return;
+    list.querySelectorAll('.model-opt').forEach(el => {
+      const cb = el.querySelector('input');
+      const m = MODELS.find(x => x.id === cb.value);
+      if (m && !m.image) {
+        el.classList.add('novision');
+        if (cb.checked) { cb.checked = false; checked.delete(cb.value); }
+      }
+    });
+  };
+  function addFiles(fileList) {
+    for (const f of fileList) {
+      if (!/^image\\/(png|jpeg|webp)$/.test(f.type)) continue;
+      if (refs.length >= MAX_REFS) { alert(`up to ${MAX_REFS} reference images`); break; }
+      if (f.size > MAX_REF_MB * 1024 * 1024) { alert(`${f.name}: over ${MAX_REF_MB}MB`); continue; }
+      const rd = new FileReader();
+      rd.onload = () => { refs.push(rd.result); renderRefs(); };
+      rd.readAsDataURL(f);
+    }
+  }
+  dz.addEventListener('click', (ev) => { if (ev.target.tagName !== 'BUTTON') fileInput.click(); });
+  fileInput.addEventListener('change', () => { addFiles(fileInput.files); fileInput.value = ''; });
+  previews.addEventListener('click', (ev) => {
+    if (ev.target.tagName === 'BUTTON') { refs.splice(+ev.target.dataset.i, 1); renderRefs(); }
+  });
+  ['dragover', 'dragenter'].forEach(t => dz.addEventListener(t, (ev) => {
+    ev.preventDefault(); dz.classList.add('over'); }));
+  ['dragleave', 'drop'].forEach(t => dz.addEventListener(t, (ev) => {
+    ev.preventDefault(); dz.classList.remove('over'); }));
+  dz.addEventListener('drop', (ev) => addFiles(ev.dataTransfer.files));
+  document.querySelector('textarea[name=prompt]').addEventListener('paste', (ev) => {
+    const files = [...(ev.clipboardData?.items || [])]
+      .filter(it => it.kind === 'file').map(it => it.getAsFile()).filter(Boolean);
+    if (files.length) { ev.preventDefault(); addFiles(files); }
+  });
+  const origSync = syncModels;
+  syncModels = function(form) {
+    origSync(form);
+    form.querySelectorAll('input.r-hidden').forEach(n => n.remove());
+    refs.forEach(d => {
+      const inp = document.createElement('input');
+      inp.type = 'hidden'; inp.name = 'refs'; inp.value = d; inp.className = 'r-hidden';
+      form.appendChild(inp);
+    });
+  };
 </script>
 """
 
@@ -466,8 +545,16 @@ def create_form_html(prefill=""):
   <label>Prompt <span class="hint">what should every model build? single-file HTML
   with an auto-demo works best</span></label>
   <textarea name="prompt" required placeholder="Build a playable ... as one self-contained HTML file ...">{html.escape(prefill)}</textarea>
+  <label>Reference images <span class="hint">optional · drag &amp; drop / paste /
+  click · sent to every model as multimodal input · up to 3</span></label>
+  <div class="dropzone" id="dropzone">
+    <span class="hint" style="margin:0" id="drop-hint">drop images here, paste, or click to browse</span>
+    <div class="ref-previews" id="ref-previews"></div>
+    <input type="file" id="ref-file" accept="image/png,image/jpeg,image/webp" multiple hidden>
+  </div>
   <label>Models <span class="hint">live catalog (/api/v1/models) · tuned lineup pinned
-  first · pick up to 4</span></label>
+  first · pick up to 4<span id="vision-note" hidden> · <b>ref images attached — models
+  without image input are disabled</b></span></span></label>
   <input type="text" id="model-search" placeholder="search models…" autocomplete="off">
   <div class="models" id="model-list" style="max-height:264px;overflow:auto;margin-top:8px">
     <span class="hint" style="margin:0">loading catalog…</span>
@@ -609,13 +696,30 @@ def watch_html(e):
                 gcs = json.load(f).get("gcs") or {}
             vids = [(nm, u) for nm, u in gcs.get("files", []) if nm.endswith(".mp4")]
             if vids:
-                gcs_html = ('<label>Share <span class="hint">public GCS URLs</span></label>'
+                share_text = urllib.parse.quote(f"{e['title']} — same prompt, one shot each. "
+                                                f"The bill is real. {vids[0][1]}")
+                share_btns = (
+                    f'<a class="btn2" style="padding:5px 12px;font-size:12.5px" target="_blank" '
+                    f'rel="noopener" href="https://twitter.com/intent/tweet?text={share_text}">Share on X</a>'
+                    f'<a class="btn2" style="padding:5px 12px;font-size:12.5px" target="_blank" '
+                    f'rel="noopener" href="https://www.reddit.com/submit?url='
+                    f'{urllib.parse.quote(vids[0][1])}&title={urllib.parse.quote(e["title"])}">Post to Reddit</a>')
+                gcs_html = ('<label style="display:flex;align-items:center;justify-content:space-between">'
+                            f'Share <span style="display:flex;gap:8px">{share_btns}</span></label>'
                             '<div class="files">'
                             + "".join(f'<a href="{u}" target="_blank" rel="noopener">'
                                       f"{html.escape(nm)} ↗</a>" for nm, u in vids)
                             + "</div>")
         except ValueError:
             pass
+    ref_html = ""
+    ref_files = sorted(os.path.basename(p) for p in glob.glob(os.path.join(e["dir"], "ref*"))
+                       if os.path.splitext(p)[1].lower() in (".png", ".jpg", ".jpeg", ".webp"))
+    if ref_files:
+        ref_html = ('<label>Reference images</label><div class="ref-previews">'
+                    + "".join(f'<span class="ref-item"><a href="/media/{e["id"]}/{nm}" target="_blank">'
+                              f'<img src="/media/{e["id"]}/{nm}" alt="{nm}"></a></span>'
+                              for nm in ref_files) + "</div>")
     common_rows = "".join(
         f"<div><span>{k}</span><span>{html.escape(str(v))}</span></div>"
         for k, v in [("episode", e["id"]), ("models", n),
@@ -640,6 +744,7 @@ def watch_html(e):
         </span>
       </label>
       <pre class="prompt" id="prompt-text">{html.escape(prompt_text) or "—"}</pre>
+      {ref_html}
       <label>Run</label>
       <div class="kv">{common_rows}</div>
       {gcs_html}
@@ -745,6 +850,28 @@ def job_html(job):
     return page(f"Job {job['id']}", "\n".join(body), refresh=refresh, head=head)
 
 
+def decode_ref_image(data_url, max_bytes=6 * 1024 * 1024):
+    """dataURL → (ext, bytes)。按真实 magic bytes 判型（Anthropic 严格校验
+    声明 mime 与字节一致，扩展名/前缀不可信），超限或非图返回 None。"""
+    m = re.match(r"data:image/(?:png|jpeg|webp);base64,(.+)$", data_url, re.S)
+    if not m:
+        return None
+    import base64
+    try:
+        data = base64.b64decode(m.group(1), validate=False)
+    except Exception:  # noqa: BLE001
+        return None
+    if not data or len(data) > max_bytes:
+        return None
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        return ("png", data)
+    if data[:3] == b"\xff\xd8\xff":
+        return ("jpg", data)
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return ("webp", data)
+    return None
+
+
 # ---------- job execution ----------
 
 def write_auth_file(job, jwt):
@@ -831,6 +958,7 @@ def upload_dist_to_gcs(job):
 # ---------- http ----------
 
 MEDIA_TYPES = {".webm": "video/webm", ".mp4": "video/mp4", ".png": "image/png",
+               ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp",
                ".json": "application/json", ".md": "text/plain; charset=utf-8",
                ".html": "text/html; charset=utf-8", ".wav": "audio/wav"}
 
@@ -983,6 +1111,11 @@ class Handler(BaseHTTPRequestHandler):
             seconds = 26
         if not prompt or not models:
             return self._send(400, page("Invalid", "<h1>prompt and at least one model required</h1>"))
+        refs = []
+        for d in form.get("refs", [])[:3]:
+            img = decode_ref_image(d)
+            if img:
+                refs.append(img)
         auth_mode = "account" if (token_id and jwt) else "manual"
         if auth_mode == "manual" and not key and not os.environ.get(KEY_ENV):
             return self._send(400, page("Invalid",
@@ -992,6 +1125,11 @@ class Handler(BaseHTTPRequestHandler):
         os.makedirs(ep_dir, exist_ok=True)
         with open(os.path.join(ep_dir, "task.md"), "w") as f:
             f.write(prompt + "\n")
+        # ref{,1,2}.<ext>：run_showdown build_user_content 会自动扫描 ep_dir/ref*
+        # 并作为多模态 image 块随 prompt 发给每个模型
+        for i, (ext, data) in enumerate(refs):
+            with open(os.path.join(ep_dir, f"ref{i or ''}.{ext}"), "wb") as f:
+                f.write(data)
         with open(os.path.join(ep_dir, "meta.json"), "w") as f:
             json.dump({"title": title}, f, ensure_ascii=False)
         job = {"id": job_id, "ep_dir": ep_dir, "models": ",".join(models),
