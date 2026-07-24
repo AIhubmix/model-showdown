@@ -4,11 +4,23 @@
     python3 webapp.py [--port 7788] [--host 127.0.0.1]
 
 Stdlib only. Jobs run sequentially through showdown.py (GPU recording must be
-serial). BYOK per the playground convention: the visitor pastes their own
-gateway key, it lives in memory for the job's lifetime, goes to the subprocess
-via env, and is never written to disk or logs; if the server itself has
-$AIHUBMIX_API_KEY set the field may be left empty. UI follows the AIHubmix
-Design System tokens (playground's src/lib/tokens.css).
+serial). Key acquisition mirrors the playground (aihubmix-chat) exactly:
+
+  · Account mode — Clerk sign-in, pick one of your gateway keys (list comes
+    from GET {server_domain}/call/tkn/, masked). Requests then carry
+    `Authorization: Bearer <Clerk JWT>` + `X-Pg-Token-Id: <key id>` and the
+    gateway swaps in the real key — the full key never touches this process
+    or disk. Clerk JWTs are short-lived, so the job page keeps pushing fresh
+    ones while the job runs (keep it open); run_showdown re-reads the auth
+    file on every request/retry.
+  · Manual mode — paste a full sk-key (BYOK); held in memory for the job's
+    lifetime only, passed via env, never stored or logged.
+
+Account mode needs `web.clerk_publishable_key` in showdown.config.json (or
+env SHOWDOWN_CLERK_PK / SHOWDOWN_SERVER_DOMAIN to override — e.g. point both
+at the test suite for local development; the pk_live instance only allows
+aihubmix.com origins). Without it the account tab explains itself and manual
+mode still works.
 
 MVP for trusted networks — binds 127.0.0.1 by default; put real auth in front
 before exposing it anywhere public.
@@ -24,6 +36,7 @@ import sys
 import threading
 import time
 import urllib.parse
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -33,7 +46,12 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 WEB_EP_DIR = os.path.join(SCRIPT_DIR, "episodes", "web")
 KEY_ENV = run_showdown.API_KEY_ENV
 
-JOBS = {}          # id -> job dict (key held in memory only, never persisted)
+_web_cfg = run_showdown.CONFIG.get("web", {})
+CLERK_PK = os.environ.get("SHOWDOWN_CLERK_PK") or _web_cfg.get("clerk_publishable_key", "")
+SERVER_DOMAIN = (os.environ.get("SHOWDOWN_SERVER_DOMAIN")
+                 or _web_cfg.get("server_domain", "https://aihubmix.com")).rstrip("/")
+
+JOBS = {}          # id -> job dict (manual keys held in memory only, never persisted)
 JOBS_LOCK = threading.Lock()
 JOB_QUEUE = queue.Queue()
 
@@ -84,6 +102,17 @@ textarea { min-height:180px; font-family:var(--ah-font-mono); font-size:13px; re
   transition:background 120ms var(--ah-ease); }
 .btn:hover { background:var(--ah-primary-hover); }
 .btn:active { background:var(--ah-primary-pressed); }
+.btn2 { display:inline-flex; align-items:center; background:var(--ah-card);
+  color:var(--ah-primary); border:1px solid var(--ah-primary); border-radius:8px;
+  padding:8px 16px; font-size:14px; font-weight:600; cursor:pointer;
+  transition:background 120ms var(--ah-ease); }
+.btn2:hover { background:rgba(37,99,235,0.06); }
+.tabs { display:flex; gap:2px; border:1px solid var(--ah-border); border-radius:8px;
+  padding:3px; width:fit-content; margin-bottom:12px; }
+.tab { border:0; background:transparent; border-radius:6px; padding:6px 16px;
+  font-size:13px; font-weight:600; color:var(--ah-fg-3); cursor:pointer;
+  font-family:var(--ah-font-body); }
+.tab.active { background:var(--ah-primary); color:#fff; }
 .tag { display:inline-block; border-radius:8px; padding:2px 10px; font-size:12px; font-weight:600; }
 .tag.queued  { background:var(--ah-disabled); color:var(--ah-fg-3); }
 .tag.running { background:rgba(245,182,39,0.14); color:var(--ah-warning-text); }
@@ -98,13 +127,26 @@ th { color:var(--ah-fg-3); font-size:12px; font-weight:600; }
 a { color:var(--ah-primary); text-decoration:none; }
 a:hover { color:var(--ah-primary-hover); }
 .files a { display:inline-block; margin:4px 12px 4px 0; font-family:var(--ah-font-mono); font-size:13px; }
+.acct-line { display:flex; align-items:center; gap:12px; font-size:14px; }
+"""
+
+CLERK_BOOT = """
+<script type="module">
+  import {{ Clerk }} from 'https://cdn.jsdelivr.net/npm/@clerk/clerk-js@5/+esm';
+  window._clerkReady = (async () => {{
+    const clerk = new Clerk({pk});
+    await clerk.load();
+    window._clerk = clerk;
+    return clerk;
+  }})().catch(e => {{ window._clerkErr = String(e); return null; }});
+</script>
 """
 
 
-def page(title, body, refresh=None):
+def page(title, body, refresh=None, head=""):
     meta = f'<meta http-equiv="refresh" content="{refresh}">' if refresh else ""
     return f"""<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">{meta}
+<meta name="viewport" content="width=device-width, initial-scale=1">{meta}{head}
 <title>{html.escape(title)}</title><style>{CSS}</style></head><body><div class="wrap">
 {body}</div></body></html>"""
 
@@ -114,17 +156,66 @@ def lineup_models():
             for mid, cfg in run_showdown.MODELS.items()]
 
 
+# ---------- pages ----------
+
+KEY_SECTION_JS = """
+<script type="module">
+  // module：保证在 head 里的 Clerk 引导 module 之后按序执行（普通 script 会抢跑）
+  const $ = (id) => document.getElementById(id);
+  let authMode = 'account';
+  function setMode(m) {
+    authMode = m;
+    $('tab-account').classList.toggle('active', m === 'account');
+    $('tab-manual').classList.toggle('active', m === 'manual');
+    $('pane-account').hidden = m !== 'account';
+    $('pane-manual').hidden = m !== 'manual';
+  }
+  $('tab-account').onclick = () => setMode('account');
+  $('tab-manual').onclick = () => setMode('manual');
+
+  async function initAccount() {
+    const st = $('acct-status');
+    if (!window._clerkReady) { st.textContent = 'account mode is not configured on this deployment — paste a key instead'; setMode('manual'); return; }
+    const clerk = await window._clerkReady;
+    if (!clerk) { st.textContent = 'Clerk failed to load (origin not allowed?): ' + (window._clerkErr || '') + ' — paste a key instead'; setMode('manual'); return; }
+    if (!clerk.user) {
+      st.textContent = 'sign in to pick one of your gateway keys';
+      $('sign-in').hidden = false;
+      $('sign-in').onclick = () => clerk.openSignIn();
+      clerk.addListener(({ user }) => { if (user) location.reload(); });
+      return;
+    }
+    st.textContent = 'loading your keys…';
+    const jwt = await clerk.session.getToken();
+    const r = await fetch('/api/keys', { headers: { Authorization: 'Bearer ' + jwt } });
+    if (!r.ok) { st.textContent = 'could not load keys (' + r.status + ') — paste a key instead'; setMode('manual'); return; }
+    const keys = await r.json();
+    if (!keys.length) { st.textContent = 'no keys on this account — create one in the console, or paste a key'; return; }
+    const sel = $('key-select');
+    sel.innerHTML = keys.map(k => `<option value="${k.id}">${k.name} · ${k.masked}</option>`).join('');
+    sel.hidden = false;
+    st.textContent = `signed in as ${clerk.user.primaryEmailAddress?.emailAddress || clerk.user.id} —`;
+  }
+  initAccount();
+
+  document.getElementById('showdown-form').addEventListener('submit', async (e) => {
+    if (authMode !== 'account') return;           // manual: plain POST
+    e.preventDefault();
+    const clerk = window._clerk;
+    if (!clerk?.user) { alert('sign in first, or switch to "Paste a key"'); return; }
+    document.getElementById('f-token-id').value = $('key-select').value;
+    document.getElementById('f-jwt').value = await clerk.session.getToken();
+    e.target.submit();
+  });
+</script>
+"""
+
+
 def home_html():
     opts = "".join(
         f'<label class="model-opt"><input type="checkbox" name="models" value="{mid}"'
         f'{" checked" if default else ""}> {html.escape(disp)} <code>{mid}</code></label>'
         for mid, disp, default in lineup_models())
-    server_key = bool(os.environ.get(KEY_ENV))
-    key_hint = ("server key configured — leave empty to use it, or paste your own"
-                if server_key else
-                'paste your gateway key (get one at <a href="https://console.aihubmix.com" '
-                'target="_blank" rel="noopener">console.aihubmix.com</a>); '
-                "used for this job only, kept in memory, never stored")
     with JOBS_LOCK:
         rows = "".join(
             f'<tr><td><a href="/job/{j["id"]}">{j["id"]}</a></td>'
@@ -135,11 +226,14 @@ def home_html():
     jobs_card = (f'<div class="card"><label>Recent jobs</label><table>'
                  f"<tr><th>id</th><th>title</th><th>status</th><th>created</th></tr>{rows}"
                  f"</table></div>") if rows else ""
+    server_key_hint = (" (server key configured — manual field may stay empty)"
+                       if os.environ.get(KEY_ENV) else "")
+    head = CLERK_BOOT.format(pk=json.dumps(CLERK_PK)) if CLERK_PK else ""
     return page("Model Showdown", f"""
 <h1>Model Showdown</h1>
 <div class="sub">Same prompt · one shot each · real costs — generates a publish-ready
 side-by-side comparison video. All models served via AIHubMix.</div>
-<div class="card"><form method="post" action="/submit">
+<div class="card"><form method="post" action="/submit" id="showdown-form">
   <label>Prompt <span class="hint">what should every model build? single-file HTML
   with an auto-demo works best</span></label>
   <textarea name="prompt" required placeholder="Build a playable ... as one self-contained HTML file ..."></textarea>
@@ -149,11 +243,28 @@ side-by-side comparison video. All models served via AIHubMix.</div>
   <input type="text" name="title" placeholder="Model Showdown">
   <label>Record seconds</label>
   <select name="seconds"><option>18</option><option selected>26</option><option>40</option></select>
-  <label>API key <span class="hint">{key_hint}</span></label>
-  <input type="password" name="api_key" autocomplete="off" placeholder="sk-...">
+  <label>API key <span class="hint">account keys stay in the gateway — the full key
+  never reaches this server; manual keys live in memory for this job only{server_key_hint}</span></label>
+  <div class="tabs">
+    <button type="button" class="tab active" id="tab-account">My account keys</button>
+    <button type="button" class="tab" id="tab-manual">Paste a key</button>
+  </div>
+  <div id="pane-account">
+    <div class="acct-line">
+      <span id="acct-status" class="hint" style="margin:0">…</span>
+      <select id="key-select" hidden style="width:auto;min-width:280px"></select>
+      <button type="button" class="btn2" id="sign-in" hidden>Sign in</button>
+    </div>
+  </div>
+  <div id="pane-manual" hidden>
+    <input type="password" name="api_key" autocomplete="off" placeholder="sk-...">
+  </div>
+  <input type="hidden" name="token_id" id="f-token-id">
+  <input type="hidden" name="jwt" id="f-jwt">
   <button class="btn" type="submit">Run the showdown</button>
 </form></div>
-{jobs_card}""")
+{jobs_card}
+{KEY_SECTION_JS}""", head=head)
 
 
 def job_html(job):
@@ -161,6 +272,11 @@ def job_html(job):
     body = [f'<h1>Job {job["id"]}</h1>',
             f'<div class="sub">{html.escape(job["title"])} · '
             f'<span class="tag {st}">{st.upper()}</span></div>']
+    if job["auth_mode"] == "account" and st in ("queued", "running"):
+        body.append('<div class="card" style="padding:14px 24px"><span class="hint" style="margin:0">'
+                    'account-key job: keep this page open — it refreshes the short-lived '
+                    'sign-in token the gateway needs (or resubmit with a pasted key for '
+                    'unattended runs)</span></div>')
     if st == "queued":
         with JOBS_LOCK:
             ahead = sum(1 for j in JOBS.values()
@@ -184,7 +300,30 @@ def job_html(job):
                     f'<div class="files">{links}</div></div>')
     body.append('<div class="sub"><a href="/">← new showdown</a></div>')
     refresh = 5 if st in ("queued", "running") else None
-    return page(f"Job {job['id']}", "\n".join(body), refresh=refresh)
+    head = ""
+    if job["auth_mode"] == "account" and st in ("queued", "running") and CLERK_PK:
+        # 每次自刷新都推一枚新 JWT（Clerk token 分钟级过期；重试/下一条请求现读文件）
+        head = CLERK_BOOT.format(pk=json.dumps(CLERK_PK)) + f"""
+<script type="module">
+  const clerk = await window._clerkReady;
+  if (clerk?.user) {{
+    const jwt = await clerk.session.getToken();
+    fetch('/job/{job["id"]}/token', {{ method: 'POST',
+      headers: {{ 'Content-Type': 'application/json' }},
+      body: JSON.stringify({{ jwt }}) }});
+  }}
+</script>"""
+    return page(f"Job {job['id']}", "\n".join(body), refresh=refresh, head=head)
+
+
+# ---------- job execution ----------
+
+def write_auth_file(job, jwt):
+    path = os.path.join(job["ep_dir"], ".auth.json")
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        json.dump({"jwt": jwt, "token_id": job["token_id"]}, f)
+    return path
 
 
 def worker():
@@ -194,7 +333,12 @@ def worker():
             job = JOBS[job_id]
             job["status"] = "running"
         env = os.environ.copy()
-        if job["key"]:
+        auth_path = None
+        if job["auth_mode"] == "account":
+            auth_path = os.path.join(job["ep_dir"], ".auth.json")
+            env["SHOWDOWN_AUTH_FILE"] = auth_path
+            env["SHOWDOWN_GATEWAY"] = f"{SERVER_DOMAIN}/v1/chat/completions"
+        elif job["key"]:
             env[KEY_ENV] = job["key"]
         cmd = [sys.executable, os.path.join(SCRIPT_DIR, "showdown.py"), job["ep_dir"],
                "--task", os.path.join(job["ep_dir"], "task.md"),
@@ -209,10 +353,15 @@ def worker():
             with open(os.path.join(job["ep_dir"], "run.log"), "a") as log:
                 log.write(f"\nworker error: {e}\n")
             ok = False
+        finally:
+            if auth_path and os.path.exists(auth_path):
+                os.remove(auth_path)
         with JOBS_LOCK:
             job["status"] = "done" if ok else "failed"
             job["key"] = None  # key 用完即弃
 
+
+# ---------- http ----------
 
 class Handler(BaseHTTPRequestHandler):
     server_version = "showdown-web"
@@ -225,8 +374,30 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
-    def log_message(self, fmt, *a):  # 不打请求日志（POST body 里有 key）
+    def log_message(self, fmt, *a):  # 不打请求日志（body/头里有 key 与 JWT）
         pass
+
+    def _proxy_keys(self):
+        """代理 playground 同款 key 列表接口（浏览器直连会撞 CORS，服务端转发）。"""
+        jwt = self.headers.get("Authorization", "")
+        if not jwt.startswith("Bearer "):
+            return self._send(401, "[]", "application/json")
+        req = urllib.request.Request(f"{SERVER_DOMAIN}/call/tkn/?num=10000",
+                                     headers={"Authorization": jwt})
+        try:
+            with urllib.request.urlopen(req, timeout=15) as r:
+                body = json.load(r)
+        except urllib.error.HTTPError as e:
+            return self._send(e.code, "[]", "application/json")
+        except Exception:  # noqa: BLE001
+            return self._send(502, "[]", "application/json")
+        if body.get("success") is False:
+            return self._send(403, "[]", "application/json")
+        keys = [{"id": str(k.get("id") or k.get("token_id") or k.get("name")),
+                 "name": k.get("name") or "Unnamed Key",
+                 "masked": k.get("key") or k.get("masked_key") or "****"}
+                for k in (body.get("data") or []) if k.get("status") in (None, 1)]
+        return self._send(200, json.dumps(keys), "application/json")
 
     def do_GET(self):
         parts = self.path.split("?")[0].strip("/").split("/")
@@ -234,6 +405,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, home_html())
         if parts[0] == "healthz":
             return self._send(200, "ok", "text/plain")
+        if parts[0] == "api" and len(parts) == 2 and parts[1] == "keys":
+            return self._proxy_keys()
         if parts[0] == "job" and len(parts) >= 2:
             with JOBS_LOCK:
                 job = JOBS.get(parts[1])
@@ -255,31 +428,55 @@ class Handler(BaseHTTPRequestHandler):
         return self._send(404, page("Not found", "<h1>404</h1>"))
 
     def do_POST(self):
+        parts = self.path.strip("/").split("/")
+        length = int(self.headers.get("Content-Length", 0))
+        raw = self.rfile.read(length)
+
+        # 任务页推新 JWT：只更新 jwt，token_id 以服务端任务记录为准（防篡改）
+        if len(parts) == 3 and parts[0] == "job" and parts[2] == "token":
+            with JOBS_LOCK:
+                job = JOBS.get(parts[1])
+            if not job or job["auth_mode"] != "account" or job["status"] not in ("queued", "running"):
+                return self._send(404, "{}", "application/json")
+            try:
+                jwt = json.loads(raw).get("jwt") or ""
+            except ValueError:
+                jwt = ""
+            if jwt:
+                write_auth_file(job, jwt)
+            return self._send(200, "{}", "application/json")
+
         if self.path != "/submit":
             return self._send(404, page("Not found", "<h1>404</h1>"))
-        length = int(self.headers.get("Content-Length", 0))
-        form = urllib.parse.parse_qs(self.rfile.read(length).decode())
-        prompt = (form.get("prompt") or [""])[0].strip()
+        form = urllib.parse.parse_qs(raw.decode())
+        get = lambda k: (form.get(k) or [""])[0].strip()  # noqa: E731
+        prompt = get("prompt")
         models = [m for m in form.get("models", []) if m in run_showdown.MODELS]
-        key = (form.get("api_key") or [""])[0].strip()
-        title = (form.get("title") or [""])[0].strip() or "Model Showdown"
+        key, token_id, jwt = get("api_key"), get("token_id"), get("jwt")
+        title = get("title") or "Model Showdown"
         try:
-            seconds = max(8, min(60, int((form.get("seconds") or ["26"])[0])))
+            seconds = max(8, min(60, int(get("seconds") or "26")))
         except ValueError:
             seconds = 26
         if not prompt or not models:
             return self._send(400, page("Invalid", "<h1>prompt and at least one model required</h1>"))
-        if not key and not os.environ.get(KEY_ENV):
-            return self._send(400, page("Invalid", f"<h1>no API key: paste one or set {KEY_ENV} on the server</h1>"))
+        auth_mode = "account" if (token_id and jwt) else "manual"
+        if auth_mode == "manual" and not key and not os.environ.get(KEY_ENV):
+            return self._send(400, page("Invalid",
+                f"<h1>no key: sign in and pick one, paste one, or set {KEY_ENV} on the server</h1>"))
         job_id = time.strftime("%m%d-%H%M%S") + "-" + secrets.token_hex(3)
         ep_dir = os.path.join(WEB_EP_DIR, job_id)
         os.makedirs(ep_dir, exist_ok=True)
         with open(os.path.join(ep_dir, "task.md"), "w") as f:
             f.write(prompt + "\n")
+        job = {"id": job_id, "ep_dir": ep_dir, "models": ",".join(models),
+               "seconds": seconds, "title": title, "status": "queued",
+               "created": time.time(), "auth_mode": auth_mode,
+               "key": key or None, "token_id": token_id or None}
+        if auth_mode == "account":
+            write_auth_file(job, jwt)
         with JOBS_LOCK:
-            JOBS[job_id] = {"id": job_id, "ep_dir": ep_dir, "models": ",".join(models),
-                            "seconds": seconds, "title": title, "key": key or None,
-                            "status": "queued", "created": time.time()}
+            JOBS[job_id] = job
         JOB_QUEUE.put(job_id)
         self.send_response(303)
         self.send_header("Location", f"/job/{job_id}")
@@ -295,7 +492,8 @@ def main():
     os.makedirs(WEB_EP_DIR, exist_ok=True)
     threading.Thread(target=worker, daemon=True).start()
     srv = ThreadingHTTPServer((args.host, args.port), Handler)
-    print(f"showdown web: http://{args.host}:{args.port}  (jobs land in episodes/web/)")
+    mode = f"account mode ON ({SERVER_DOMAIN})" if CLERK_PK else "manual keys only"
+    print(f"showdown web: http://{args.host}:{args.port}  [{mode}]  (jobs land in episodes/web/)")
     srv.serve_forever()
 
 

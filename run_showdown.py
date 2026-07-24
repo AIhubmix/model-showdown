@@ -35,11 +35,30 @@ if os.path.exists(CONFIG_PATH):
     with open(CONFIG_PATH) as _f:
         CONFIG = json.load(_f)
 
-GATEWAY = CONFIG.get("gateway", "https://aihubmix.com/v1/chat/completions")
+GATEWAY = os.environ.get("SHOWDOWN_GATEWAY") \
+    or CONFIG.get("gateway", "https://aihubmix.com/v1/chat/completions")
 API_KEY_ENV = CONFIG.get("api_key_env", "AIHUBMIX_API_KEY")
 # key 校验放在 main() 里而非 import 时：webapp 等调用方需要无 key 也能 import
 # 读 MODELS/PRICING（BYOK 的 key 是每个任务经环境变量传给子进程的）
 API_KEY = os.environ.get(API_KEY_ENV)
+# 账户模式（与 playground pgFetch 同构）：SHOWDOWN_AUTH_FILE 指向 {jwt, token_id}，
+# 网关按 X-Pg-Token-Id 注入真 key，完整 key 不经过本进程。Clerk JWT 短时效，
+# webapp 任务页会持续刷新该文件，所以必须每次请求现读，不能启动时缓存。
+AUTH_FILE = os.environ.get("SHOWDOWN_AUTH_FILE")
+
+
+def auth_headers(kind):
+    """kind: openai / anthropic / google —— BYOK 按协议发 key 头；
+    账户模式统一发 Authorization(JWT) + X-Pg-Token-Id（对齐 playground _client.ts）。"""
+    if AUTH_FILE:
+        with open(AUTH_FILE) as f:
+            a = json.load(f)
+        return {"Authorization": f"Bearer {a['jwt']}", "X-Pg-Token-Id": str(a["token_id"])}
+    if kind == "anthropic":
+        return {"x-api-key": API_KEY}
+    if kind == "google":
+        return {"x-goog-api-key": API_KEY}
+    return {"Authorization": f"Bearer {API_KEY}"}
 
 # USD per 1M tokens (input, output)
 PRICING = {
@@ -285,8 +304,8 @@ def call_model_messages(model, prompt, label, ep_dir=None):
         data=json.dumps(payload).encode(),
         headers={
             "Content-Type": "application/json",
-            "x-api-key": API_KEY,
             "Accept": "text/event-stream",
+            **auth_headers("anthropic"),
         },
     )
     content, usage, finish, err = [], {}, None, None
@@ -384,8 +403,8 @@ def call_model_responses(model, prompt, label, ep_dir=None):
         data=json.dumps(payload).encode(),
         headers={
             "Content-Type": "application/json",
-            "Authorization": f"Bearer {API_KEY}",
             "Accept": "text/event-stream",
+            **auth_headers("openai"),
         },
     )
     text, usage, status, err = [], {}, None, None
@@ -482,8 +501,8 @@ def call_model_gemini(model, prompt, label, ep_dir=None):
         data=json.dumps(payload).encode(),
         headers={
             "Content-Type": "application/json",
-            "x-goog-api-key": API_KEY,
             "Accept": "text/event-stream",
+            **auth_headers("google"),
         },
     )
     content, usage, finish, err = [], {}, None, None
@@ -589,8 +608,8 @@ def call_model(model, prompt, label, ep_dir=None):
         data=json.dumps(payload).encode(),
         headers={
             "Content-Type": "application/json",
-            "Authorization": f"Bearer {API_KEY}",
             "Accept": "text/event-stream",
+            **auth_headers("openai"),
         },
     )
     content, usage, finish, model_echo, err = [], {}, None, None, None
@@ -832,7 +851,7 @@ def main():
     ap.add_argument("--rec-size", metavar="WxH", default="720x960",
                     help="录屏视口。横屏内容(赛车/宽场景)用 1280x720，默认 720x960 竖屏")
     args = ap.parse_args()
-    if not API_KEY:
+    if not API_KEY and not AUTH_FILE:
         sys.exit(f"missing API key: export {API_KEY_ENV}=sk-... "
                  f"(any OpenAI-compatible gateway works; default is aihubmix.com)")
     try:

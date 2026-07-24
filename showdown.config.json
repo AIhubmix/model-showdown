@@ -6,6 +6,10 @@
     "watermark": "Made with model-showdown \u00b7 aihubmix.com",
     "gallery": "https://aihubmix.github.io/model-showdown/"
   },
+  "web": {
+    "clerk_publishable_key": "pk_live_Y2xlcmsuYWlodWJtaXguY29tJA",
+    "server_domain": "https://aihubmix.com"
+  },
   "models": {},
   "pricing": {}
 }
