@@ -11,3 +11,4 @@ video/props*.json
 # deps / build
 node_modules/
 .DS_Store
+video/public/*/
