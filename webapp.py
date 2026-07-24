@@ -57,6 +57,9 @@ GCS_BUCKET = _cfg("SHOWDOWN_GCS_BUCKET", "gcs_bucket")
 # 反代前缀（如 SHOWDOWN_BASE_PATH=/showdown 挂在 playground.aihubmix.com/showdown/）；
 # 生成的所有站内 URL 带上 B，请求进来时剥掉再路由
 B = os.environ.get("SHOWDOWN_BASE_PATH", "").rstrip("/")
+# 反代场景下，LB 转发到源站时会把 Host 头改写成源站 FQDN（供 Caddy 选站/签证书），
+# 浏览器发来的 Referer 却是公网域名——同站校验要把公网域名也算作"本站"
+PUBLIC_HOST = os.environ.get("SHOWDOWN_PUBLIC_HOST", "")
 CAPTION_MODEL = os.environ.get("SHOWDOWN_CAPTION_MODEL") or _web_cfg.get("caption_model", "gpt-4o-mini")
 
 # 参考图 → 生成 build prompt 的指令：核心是"还原"——布局/配色/材质/动效逐条钉死
@@ -1150,9 +1153,11 @@ class Handler(BaseHTTPRequestHandler):
     def _same_site(self):
         """视频防盗链（MVP 级）：Referer 必须是本站页面——直贴 URL、外站 <video>
         嵌入都拿不到。正式部署换签名 URL/签名 Cookie。"""
-        ref = self.headers.get("Referer", "")
+        ref_host = urllib.parse.urlparse(self.headers.get("Referer", "")).netloc
+        if not ref_host:
+            return False
         host = self.headers.get("Host", "")
-        return bool(host) and urllib.parse.urlparse(ref).netloc == host
+        return ref_host == host or (bool(PUBLIC_HOST) and ref_host == PUBLIC_HOST)
 
     def _media(self, rest):
         """/media/<ep-id>/<file> — recordings first, then episode root/dist; whitelisted
