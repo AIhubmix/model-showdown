@@ -31,6 +31,7 @@ export type ShowdownProps = {
   playFrames: number;
   outroFrames: number;
   audio?: string; // public/ relative path to an audio bed, e.g. "ep02/audio.wav"
+  watermark?: string; // 片尾品牌条下的小字水印，如 "Made with model-showdown · aihubmix.com"
   layout?: 'horizontal' | 'vertical' | 'fullbleed'; // 并排(默认) / 卡片上下堆叠 / 无边框拼接+浮动角标
   fullbleedDir?: 'row' | 'col' | 'grid2x2'; // fullbleed 专用：横条堆叠(默认，适配横屏内容) / 竖条并排(适配竖屏内容) / 2x2 田字格(4个横屏内容)
 };
@@ -170,10 +171,11 @@ const Panel: React.FC<{
   );
 };
 
-const Panels: React.FC<ShowdownProps> = ({ models, tagline, layout = 'horizontal', fullbleedDir = 'row' }) => {
+const Panels: React.FC<ShowdownProps> = ({ models, layout = 'horizontal', fullbleedDir = 'row' }) => {
   const { width, height } = useVideoConfig();
   const s = width / 1080;
-  const brandH = tagline ? 110 * s : 0;
+  // clean 版：播放期没有常驻品牌条，面板吃满全高；品牌只在片尾淡入
+  const brandH = 0;
   const gap = 24 * s;
   const pad = 32 * s;
   const n = models.length;
@@ -388,10 +390,13 @@ const Scoreboard: React.FC<ShowdownProps> = ({ models }) => {
   );
 };
 
-const BrandBar: React.FC<{ tagline: string }> = ({ tagline }) => {
-  const { width, height } = useVideoConfig();
+const BrandBar: React.FC<{ tagline: string; watermark?: string }> = ({ tagline, watermark }) => {
+  const frame = useCurrentFrame();
+  const { fps, width, height } = useVideoConfig();
   const s = width / 1080;
-  const h = 110 * s;
+  const h = (watermark ? 150 : 110) * s;
+  // 片尾淡入：整条品牌区从透明升起，不打断正片
+  const enter = spring({ frame, fps, config: { damping: 200 } });
   return (
     <div
       style={{
@@ -401,18 +406,26 @@ const BrandBar: React.FC<{ tagline: string }> = ({ tagline }) => {
         top: height - h,
         height: h,
         display: 'flex',
+        flexDirection: 'column',
         alignItems: 'center',
         justifyContent: 'center',
-        gap: 20 * s,
+        gap: 10 * s,
         background: 'rgba(255,255,255,0.03)',
         borderTop: '1px solid rgba(255,255,255,0.07)',
         fontFamily: font,
+        opacity: enter,
+        transform: `translateY(${(1 - enter) * 24 * s}px)`,
       }}
     >
-      <img src={staticFile('logo.png')} style={{ height: 56 * s, borderRadius: 12 * s }} />
-      <div style={{ color: TEXT, fontSize: 36 * s, fontWeight: 800, letterSpacing: 1 }}>
-        {tagline}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 20 * s }}>
+        <img src={staticFile('logo.png')} style={{ height: 56 * s, borderRadius: 12 * s }} />
+        <div style={{ color: TEXT, fontSize: 36 * s, fontWeight: 800, letterSpacing: 1 }}>
+          {tagline}
+        </div>
       </div>
+      {watermark ? (
+        <div style={{ color: MUTED, fontSize: 22 * s, fontFamily: mono }}>{watermark}</div>
+      ) : null}
     </div>
   );
 };
@@ -445,13 +458,14 @@ export const Showdown: React.FC<ShowdownProps> = (props) => {
           <Scoreboard {...props} />
         </Sequence>
       ) : null}
-      {props.tagline && props.layout !== 'fullbleed' ? (
-        <BrandBar tagline={props.tagline} />
-      ) : null}
-      {props.tagline && props.layout === 'fullbleed' && outroFrames > 0 ? (
-        // fullbleed：播放期不遮挡画面，品牌条只在片尾账单页出现
-        <Sequence from={introFrames + playFrames} durationInFrames={outroFrames}>
-          <BrandBar tagline={props.tagline} />
+      {props.tagline ? (
+        // clean 版（全布局统一）：品牌条不进正片，只在片尾淡入；
+        // 无片尾账单时兜底在最后 60 帧淡入
+        <Sequence
+          from={outroFrames > 0 ? introFrames + playFrames : durationInFrames - 60}
+          durationInFrames={outroFrames > 0 ? outroFrames : 60}
+        >
+          <BrandBar tagline={props.tagline} watermark={props.watermark} />
         </Sequence>
       ) : null}
     </AbsoluteFill>

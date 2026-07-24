@@ -18,6 +18,7 @@ if os.path.exists(_cfg_path):
     with open(_cfg_path) as f:
         _brand = json.load(f).get("brand", {})
 TAGLINE = _brand.get("tagline", "AIHubMix: Unified API, 800+ models")
+WATERMARK = _brand.get("watermark", "")
 
 argv = [a for a in sys.argv[1:] if a != "--vertical"]
 layout = "vertical" if "--vertical" in sys.argv else "horizontal"
@@ -67,6 +68,7 @@ print(json.dumps({
     "title": title,
     "subtitle": subtitle,
     "tagline": TAGLINE,
+    "watermark": WATERMARK,
     "introFrames": 0,
     "playFrames": 600,
     "outroFrames": 130,
