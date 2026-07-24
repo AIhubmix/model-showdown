@@ -9,6 +9,20 @@ All commands run from the repository root. The tools are already here — do not
 rewrite them. Read `README.md` for architecture and `docs/` for the detailed
 step-by-step guide.
 
+For a standard episode (default lineup, no special camera work), prefer the
+one-command orchestrator — it chains steps 2-5 below and drops mp4s + posters +
+metrics + a pre-filled `post.md` into `episodes/epNN/dist/`:
+
+```bash
+python3 showdown.py --task prompt.md [--ref img.png] [--models a,b,c] [--seconds 26]
+# post-production only, on an existing episode:
+python3 showdown.py episodes/epNN --skip-gen --title "..."
+```
+
+Fall back to the manual steps when you need per-model verdict edits, orbit
+re-recording, or non-default compositions. Gateway/brand/model overrides live
+in `showdown.config.json`.
+
 ## 0. Parse the request
 
 From the user's message extract:

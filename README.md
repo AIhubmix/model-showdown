@@ -52,10 +52,29 @@ OpenAI-compatible gateway key in `AIHUBMIX_API_KEY` (or point `GATEWAY` in
 pnpm install && npx playwright install chromium   # recorder
 cd video && pnpm install && cd ..                 # renderer
 
-# one command: auto-numbered episode, generation + recording pipelined
+# one command, prompt -> publish-ready share pack
+python3 showdown.py --task my-prompt.md --ref reference.png
+```
+
+That runs the whole chain (generate + record + audio + render, wide 1920×1080
+and square 1080² by default) and drops everything you need to post into
+`episodes/epNN/dist/`: the mp4s, poster shots, `metrics.json`, and a
+pre-filled `post.md` with X / Reddit drafts whose numbers come straight from
+the run's real bill. Useful flags: `--models a,b,c`, `--seconds 40`,
+`--formats wide`, `--title` / `--subtitle`, `--style arcade`, and
+`--skip-gen episodes/epNN` to re-run post-production on an existing episode.
+
+Gateway, brand tagline/watermark, and model/pricing overrides live in
+`showdown.config.json` — point it at any OpenAI-compatible gateway and put
+your key in the env var it names (`AIHUBMIX_API_KEY` by default).
+
+Each stage is still runnable on its own:
+
+```bash
+# generation + recording only
 python3 run_showdown.py --task my-prompt.md --ref reference.png --record 26
 
-# audio bed + props + render
+# audio bed + props + render, step by step
 python3 gen_audio.py video/public/epNN/audio.wav --style zen --seconds 26
 cp episodes/epNN/recordings/*.webm video/public/epNN/
 python3 gen_props.py episodes/epNN "Video title" "Model A vs B vs C" > video/props.json

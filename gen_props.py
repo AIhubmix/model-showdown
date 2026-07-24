@@ -11,6 +11,14 @@ import sys
 
 ACCENTS = ["#38bdf8", "#f97316", "#a78bfa", "#22c55e"]
 
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+_cfg_path = os.path.join(SCRIPT_DIR, "showdown.config.json")
+_brand = {}
+if os.path.exists(_cfg_path):
+    with open(_cfg_path) as f:
+        _brand = json.load(f).get("brand", {})
+TAGLINE = _brand.get("tagline", "AIHubMix: Unified API, 800+ models")
+
 argv = [a for a in sys.argv[1:] if a != "--vertical"]
 layout = "vertical" if "--vertical" in sys.argv else "horizontal"
 ep_dir = argv[0].rstrip("/")
@@ -58,7 +66,7 @@ audio = f"{ep}/audio.wav" if os.path.exists(f"video/public/{ep}/audio.wav") else
 print(json.dumps({
     "title": title,
     "subtitle": subtitle,
-    "tagline": "AIHubMix: Unified API, 800+ models",
+    "tagline": TAGLINE,
     "introFrames": 0,
     "playFrames": 600,
     "outroFrames": 130,

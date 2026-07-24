@@ -1,0 +1,11 @@
+{
+  "gateway": "https://aihubmix.com/v1/chat/completions",
+  "api_key_env": "AIHUBMIX_API_KEY",
+  "brand": {
+    "tagline": "AIHubMix: Unified API, 800+ models",
+    "watermark": "Made with model-showdown \u00b7 aihubmix.com",
+    "gallery": "https://aihubmix.github.io/model-showdown/"
+  },
+  "models": {},
+  "pricing": {}
+}

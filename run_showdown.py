@@ -26,8 +26,21 @@ import urllib.request
 from datetime import datetime, timezone
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-GATEWAY = "https://aihubmix.com/v1/chat/completions"
-API_KEY = os.environ["AIHUBMIX_API_KEY"]
+
+# showdown.config.json 外置网关/品牌/模型覆盖，便于外部用户 BYOK 自部署；
+# 缺文件时回落到内置默认，老工作流不受影响。
+CONFIG_PATH = os.path.join(SCRIPT_DIR, "showdown.config.json")
+CONFIG = {}
+if os.path.exists(CONFIG_PATH):
+    with open(CONFIG_PATH) as _f:
+        CONFIG = json.load(_f)
+
+GATEWAY = CONFIG.get("gateway", "https://aihubmix.com/v1/chat/completions")
+API_KEY_ENV = CONFIG.get("api_key_env", "AIHUBMIX_API_KEY")
+API_KEY = os.environ.get(API_KEY_ENV)
+if not API_KEY:
+    sys.exit(f"missing API key: export {API_KEY_ENV}=sk-... "
+             f"(any OpenAI-compatible gateway works; default is aihubmix.com)")
 
 # USD per 1M tokens (input, output)
 PRICING = {
@@ -110,6 +123,9 @@ MODELS = {
                          "params": {"generationConfig": {"maxOutputTokens": 65536,
                                                           "thinkingConfig": {"thinkingLevel": "high"}}}},
 }
+# config 里的 models/pricing 是对内置表的覆盖/追加（key 相同则整条替换）
+PRICING.update({k: tuple(v) for k, v in CONFIG.get("pricing", {}).items()})
+MODELS.update(CONFIG.get("models", {}))
 DEFAULT_MAX_TOKENS = 60000
 
 REQUEST_TIMEOUT_S = 3600  # per socket read while streaming
