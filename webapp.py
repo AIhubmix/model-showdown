@@ -1,35 +1,31 @@
 #!/usr/bin/env python3
-"""Self-hosted web UI for showdown: submit a prompt, queue it, download the share pack.
+"""Self-hosted web UI for showdown — create, browse, and inspect comparison runs.
 
     python3 webapp.py [--port 7788] [--host 127.0.0.1]
 
-Stdlib only. Jobs run sequentially through showdown.py (GPU recording must be
-serial). Key acquisition mirrors the playground (aihubmix-chat) exactly:
+Layout: first screen is the create form; below it, a feed of every generated
+episode (episodes/epNN + episodes/web/*). Clicking a card opens the detail
+view — left side shows every model's recording auto-playing, right side pins
+the prompt + shared run info, and clicking a work reveals its per-model
+params, response stats, and wire protocol.
 
-  · Account mode — Clerk sign-in, pick one of your gateway keys (list comes
-    from GET {server_domain}/call/tkn/, masked). Requests then carry
-    `Authorization: Bearer <Clerk JWT>` + `X-Pg-Token-Id: <key id>` and the
-    gateway swaps in the real key — the full key never touches this process
-    or disk. Clerk JWTs are short-lived, so the job page keeps pushing fresh
-    ones while the job runs (keep it open); run_showdown re-reads the auth
-    file on every request/retry.
-  · Manual mode — paste a full sk-key (BYOK); held in memory for the job's
-    lifetime only, passed via env, never stored or logged.
-
-Account mode needs `web.clerk_publishable_key` in showdown.config.json (or
-env SHOWDOWN_CLERK_PK / SHOWDOWN_SERVER_DOMAIN to override — e.g. point both
-at the test suite for local development; the pk_live instance only allows
-aihubmix.com origins). Without it the account tab explains itself and manual
-mode still works.
+Key acquisition mirrors the playground (aihubmix-chat):
+  · Account mode — Clerk sign-in, pick a key (masked list from /call/tkn/);
+    requests carry `Bearer <Clerk JWT>` + `X-Pg-Token-Id`, the gateway swaps
+    in the real key — the full key never touches this process or disk. JWTs
+    are short-lived, so the job page keeps pushing fresh ones (keep it open).
+  · Manual mode — paste an sk-key (BYOK); memory-only, never stored/logged.
 
 MVP for trusted networks — binds 127.0.0.1 by default; put real auth in front
 before exposing it anywhere public.
 """
 import argparse
+import glob
 import html
 import json
 import os
 import queue
+import re
 import secrets
 import subprocess
 import sys
@@ -43,7 +39,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import run_showdown  # noqa: E402  (for MODELS + API_KEY_ENV; import needs no key)
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-WEB_EP_DIR = os.path.join(SCRIPT_DIR, "episodes", "web")
+EPISODES_DIR = os.path.join(SCRIPT_DIR, "episodes")
+WEB_EP_DIR = os.path.join(EPISODES_DIR, "web")
 KEY_ENV = run_showdown.API_KEY_ENV
 
 _web_cfg = run_showdown.CONFIG.get("web", {})
@@ -54,6 +51,9 @@ SERVER_DOMAIN = (os.environ.get("SHOWDOWN_SERVER_DOMAIN")
 JOBS = {}          # id -> job dict (manual keys held in memory only, never persisted)
 JOBS_LOCK = threading.Lock()
 JOB_QUEUE = queue.Queue()
+
+PROTO = {"responses": "OpenAI /v1/responses", "messages": "Anthropic /v1/messages",
+         "gemini": "Google generateContent"}
 
 # ---------- AIHubmix Design System (tokens.css subset, light theme) ----------
 CSS = """
@@ -69,15 +69,18 @@ CSS = """
   --ah-font-body:'Inter','Noto Sans SC','PingFang SC',-apple-system,system-ui,sans-serif;
   --ah-font-mono:'JetBrains Mono','SF Mono',Menlo,monospace;
   --ah-shadow-card:0px 2px 8px rgba(0,0,0,0.08);
+  --ah-shadow-lift:0px 8px 24px rgba(0,0,0,0.10);
   --ah-ease:cubic-bezier(0.2,0.8,0.2,1);
 }
 * { box-sizing:border-box; }
 body { margin:0; background:var(--ah-bg); color:var(--ah-fg-2);
   font-family:var(--ah-font-body); font-size:16px; line-height:1.55; }
-.wrap { max-width:860px; margin:0 auto; padding:48px 24px 80px; }
+.wrap { max-width:1080px; margin:0 auto; padding:40px 24px 80px; }
 h1 { font-family:var(--ah-font-display); font-size:32px; color:var(--ah-fg-1);
   font-weight:700; margin:0 0 4px; }
-.sub { color:var(--ah-fg-3); font-size:14px; margin-bottom:32px; }
+h2 { font-family:var(--ah-font-display); font-size:24px; color:var(--ah-fg-1);
+  font-weight:700; margin:40px 0 16px; }
+.sub { color:var(--ah-fg-3); font-size:14px; margin-bottom:28px; }
 .card { background:var(--ah-card); border:1px solid var(--ah-border);
   border-radius:16px; box-shadow:var(--ah-shadow-card); padding:24px; margin-bottom:24px; }
 label { display:block; font-size:14px; font-weight:600; color:var(--ah-fg-1); margin:16px 0 6px; }
@@ -89,16 +92,18 @@ textarea, input[type=text], input[type=password], select {
   background:var(--ah-card); outline:none; transition:border-color 120ms var(--ah-ease), box-shadow 120ms var(--ah-ease); }
 textarea:focus, input:focus, select:focus { border-color:var(--ah-primary);
   box-shadow:0 0 0 3px rgba(37,99,235,0.15); }
-textarea { min-height:180px; font-family:var(--ah-font-mono); font-size:13px; resize:vertical; }
-.models { display:grid; grid-template-columns:repeat(auto-fill,minmax(230px,1fr)); gap:8px; }
+textarea { min-height:110px; font-family:var(--ah-font-mono); font-size:13px; resize:vertical; }
+.models { display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:8px; }
 .model-opt { display:flex; align-items:center; gap:8px; border:1px solid var(--ah-border);
-  border-radius:8px; padding:8px 12px; font-size:14px; cursor:pointer;
+  border-radius:8px; padding:7px 12px; font-size:13.5px; cursor:pointer;
   transition:background 120ms var(--ah-ease); }
 .model-opt:hover { background:rgba(17,17,17,0.03); }
-.model-opt code { font-family:var(--ah-font-mono); font-size:11px; color:var(--ah-fg-3); }
+.model-opt code { font-family:var(--ah-font-mono); font-size:10.5px; color:var(--ah-fg-3); }
+.row { display:flex; gap:16px; }
+.row > div { flex:1; }
 .btn { display:inline-flex; align-items:center; gap:8px; background:var(--ah-primary);
   color:#fff; border:0; border-radius:8px; padding:12px 24px; font-size:15px;
-  font-weight:600; font-family:var(--ah-font-body); cursor:pointer; margin-top:24px;
+  font-weight:600; font-family:var(--ah-font-body); cursor:pointer; margin-top:20px;
   transition:background 120ms var(--ah-ease); }
 .btn:hover { background:var(--ah-primary-hover); }
 .btn:active { background:var(--ah-primary-pressed); }
@@ -118,6 +123,8 @@ textarea { min-height:180px; font-family:var(--ah-font-mono); font-size:13px; re
 .tag.running { background:rgba(245,182,39,0.14); color:var(--ah-warning-text); }
 .tag.done    { background:rgba(164,229,34,0.18); color:var(--ah-success-text); }
 .tag.failed  { background:rgba(242,80,48,0.12); color:var(--ah-danger-text); }
+.tag.arena   { background:rgba(38,204,235,0.14); color:#0e7490; }
+.tag.web     { background:rgba(102,38,235,0.10); color:#6626EB; }
 pre.log { background:#1e1e1e; color:#e0e0e0; border-radius:8px; padding:16px;
   font-family:var(--ah-font-mono); font-size:12px; line-height:1.5; overflow-x:auto;
   max-height:420px; overflow-y:auto; }
@@ -128,6 +135,47 @@ a { color:var(--ah-primary); text-decoration:none; }
 a:hover { color:var(--ah-primary-hover); }
 .files a { display:inline-block; margin:4px 12px 4px 0; font-family:var(--ah-font-mono); font-size:13px; }
 .acct-line { display:flex; align-items:center; gap:12px; font-size:14px; }
+
+/* ---------- feed ---------- */
+.feed { display:grid; grid-template-columns:repeat(auto-fill,minmax(240px,1fr)); gap:16px; }
+a.feed-card { display:block; background:var(--ah-card); border:1px solid var(--ah-border);
+  border-radius:16px; overflow:hidden; color:var(--ah-fg-2); box-shadow:var(--ah-shadow-card);
+  transition:transform 120ms var(--ah-ease), box-shadow 120ms var(--ah-ease); }
+a.feed-card:hover { transform:translateY(-2px); box-shadow:var(--ah-shadow-lift); color:var(--ah-fg-2); }
+.feed-card .thumb { aspect-ratio:4/3; background:#0b0e14; overflow:hidden; }
+.feed-card .thumb img { width:100%; height:100%; object-fit:cover; display:block; }
+.feed-card .body { padding:12px 14px 14px; }
+.feed-card .t { font-weight:600; font-size:14.5px; color:var(--ah-fg-1);
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.feed-card .m { color:var(--ah-fg-3); font-size:12px; margin-top:4px;
+  font-family:var(--ah-font-mono); display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+
+/* ---------- watch (detail) ---------- */
+.watch { display:grid; grid-template-columns:minmax(0,1fr) 380px; gap:24px; align-items:start; }
+@media (max-width:960px) { .watch { grid-template-columns:1fr; } }
+.works { display:grid; gap:16px; }
+.work { background:var(--ah-card); border:2px solid var(--ah-border); border-radius:16px;
+  overflow:hidden; cursor:pointer; box-shadow:var(--ah-shadow-card);
+  transition:border-color 120ms var(--ah-ease); }
+.work.sel { border-color:var(--ah-primary); }
+.work video { width:100%; display:block; background:#000; }
+.work .wh { display:flex; align-items:center; justify-content:space-between;
+  padding:10px 14px; font-size:14px; }
+.work .wh b { color:var(--ah-fg-1); display:flex; align-items:center; gap:8px; }
+.dot { width:10px; height:10px; border-radius:50%; display:inline-block; }
+.cost { font-family:var(--ah-font-mono); color:var(--ah-success-text); font-weight:700; font-size:13px; }
+.side { position:sticky; top:24px; display:grid; gap:16px; }
+.side .card { margin:0; }
+pre.prompt { background:rgba(17,17,17,0.03); border:1px solid var(--ah-border);
+  border-radius:8px; padding:12px; font-family:var(--ah-font-mono); font-size:12px;
+  line-height:1.5; max-height:260px; overflow:auto; white-space:pre-wrap; }
+.kv { font-size:13px; }
+.kv div { display:flex; justify-content:space-between; gap:12px; padding:5px 0;
+  border-bottom:1px solid var(--ah-border); }
+.kv div:last-child { border-bottom:0; }
+.kv span:first-child { color:var(--ah-fg-3); flex:none; }
+.kv span:last-child { font-family:var(--ah-font-mono); font-size:12px; text-align:right;
+  overflow-wrap:anywhere; }
 """
 
 CLERK_BOOT = """
@@ -156,6 +204,88 @@ def lineup_models():
             for mid, cfg in run_showdown.MODELS.items()]
 
 
+# ---------- episode index ----------
+
+def load_results(ep_dir):
+    results = []
+    for path in sorted(glob.glob(f"{ep_dir}/metrics*.json")):
+        try:
+            with open(path) as f:
+                for r in json.load(f)["results"]:
+                    if r.get("code_extracted"):
+                        results.append(r)
+        except (ValueError, KeyError):
+            continue
+    return results
+
+
+def arena_episodes():
+    """episodes already featured in the public gallery (docs/rounds.js)."""
+    try:
+        with open(os.path.join(SCRIPT_DIR, "docs", "rounds.js")) as f:
+            return set(re.findall(r'episode:\s*"([^"]+)"', f.read()))
+    except OSError:
+        return set()
+
+
+def ep_title(ep_dir, results):
+    meta_path = os.path.join(ep_dir, "meta.json")
+    if os.path.exists(meta_path):
+        try:
+            with open(meta_path) as f:
+                t = json.load(f).get("title")
+            if t:
+                return t
+        except ValueError:
+            pass
+    task = os.path.join(ep_dir, "task.md")
+    if os.path.exists(task):
+        with open(task) as f:
+            first = " ".join(f.read().split()).lstrip("# ").strip()
+        if first:
+            return first[:80] + ("…" if len(first) > 80 else "")
+    return os.path.basename(ep_dir)
+
+
+def scan_episodes():
+    """Every episode with at least one recorded artifact, newest first."""
+    arena = arena_episodes()
+    eps = []
+    for d in sorted(glob.glob(f"{EPISODES_DIR}/ep*") + glob.glob(f"{WEB_EP_DIR}/*")):
+        if not os.path.isdir(d):
+            continue
+        results = load_results(d)
+        models = []
+        for r in results:
+            m = r["requested"]
+            if os.path.exists(os.path.join(d, "recordings", f"{m}.webm")):
+                models.append(r)
+        if not models:
+            continue
+        ep_id = os.path.relpath(d, EPISODES_DIR)  # "ep13" or "web/0724-..."
+        poster = next((f"poster_{r['requested']}.png" for r in models
+                       if os.path.exists(os.path.join(d, "recordings",
+                                                      f"poster_{r['requested']}.png"))), None)
+        eps.append({
+            "id": ep_id, "dir": d, "title": ep_title(d, results), "models": models,
+            "poster": poster, "cost": sum(r.get("cost_usd", 0) for r in models),
+            "mtime": os.path.getmtime(d), "arena": os.path.basename(d) in arena,
+            "web": ep_id.startswith("web/"),
+        })
+    eps.sort(key=lambda e: (-e["arena"], -e["mtime"]))
+    return eps
+
+
+def find_episode(ep_id):
+    d = os.path.realpath(os.path.join(EPISODES_DIR, ep_id))
+    if not (d.startswith(os.path.realpath(EPISODES_DIR) + os.sep) and os.path.isdir(d)):
+        return None
+    for e in scan_episodes():
+        if e["id"] == ep_id:
+            return e
+    return None
+
+
 # ---------- pages ----------
 
 KEY_SECTION_JS = """
@@ -177,7 +307,7 @@ KEY_SECTION_JS = """
     const st = $('acct-status');
     if (!window._clerkReady) { st.textContent = 'account mode is not configured on this deployment — paste a key instead'; setMode('manual'); return; }
     const clerk = await window._clerkReady;
-    if (!clerk) { st.textContent = 'Clerk failed to load (origin not allowed?): ' + (window._clerkErr || '') + ' — paste a key instead'; setMode('manual'); return; }
+    if (!clerk) { st.textContent = 'Clerk failed to load (origin not allowed?) — paste a key instead'; setMode('manual'); return; }
     if (!clerk.user) {
       st.textContent = 'sign in to pick one of your gateway keys';
       $('sign-in').hidden = false;
@@ -211,38 +341,26 @@ KEY_SECTION_JS = """
 """
 
 
-def home_html():
+def create_form_html():
     opts = "".join(
         f'<label class="model-opt"><input type="checkbox" name="models" value="{mid}"'
         f'{" checked" if default else ""}> {html.escape(disp)} <code>{mid}</code></label>'
         for mid, disp, default in lineup_models())
-    with JOBS_LOCK:
-        rows = "".join(
-            f'<tr><td><a href="/job/{j["id"]}">{j["id"]}</a></td>'
-            f'<td>{html.escape(j["title"])}</td>'
-            f'<td><span class="tag {j["status"]}">{j["status"].upper()}</span></td>'
-            f'<td>{time.strftime("%m-%d %H:%M", time.localtime(j["created"]))}</td></tr>'
-            for j in sorted(JOBS.values(), key=lambda x: -x["created"])[:20])
-    jobs_card = (f'<div class="card"><label>Recent jobs</label><table>'
-                 f"<tr><th>id</th><th>title</th><th>status</th><th>created</th></tr>{rows}"
-                 f"</table></div>") if rows else ""
     server_key_hint = (" (server key configured — manual field may stay empty)"
                        if os.environ.get(KEY_ENV) else "")
-    head = CLERK_BOOT.format(pk=json.dumps(CLERK_PK)) if CLERK_PK else ""
-    return page("Model Showdown", f"""
-<h1>Model Showdown</h1>
-<div class="sub">Same prompt · one shot each · real costs — generates a publish-ready
-side-by-side comparison video. All models served via AIHubMix.</div>
+    return f"""
 <div class="card"><form method="post" action="/submit" id="showdown-form">
   <label>Prompt <span class="hint">what should every model build? single-file HTML
   with an auto-demo works best</span></label>
   <textarea name="prompt" required placeholder="Build a playable ... as one self-contained HTML file ..."></textarea>
   <label>Models</label>
   <div class="models">{opts}</div>
-  <label>Title <span class="hint">shown on the scoreboard</span></label>
-  <input type="text" name="title" placeholder="Model Showdown">
-  <label>Record seconds</label>
-  <select name="seconds"><option>18</option><option selected>26</option><option>40</option></select>
+  <div class="row">
+    <div><label>Title <span class="hint">shown on the scoreboard</span></label>
+    <input type="text" name="title" placeholder="Model Showdown"></div>
+    <div style="flex:0 0 160px"><label>Record seconds</label>
+    <select name="seconds"><option>18</option><option selected>26</option><option>40</option></select></div>
+  </div>
   <label>API key <span class="hint">account keys stay in the gateway — the full key
   never reaches this server; manual keys live in memory for this job only{server_key_hint}</span></label>
   <div class="tabs">
@@ -262,9 +380,168 @@ side-by-side comparison video. All models served via AIHubMix.</div>
   <input type="hidden" name="token_id" id="f-token-id">
   <input type="hidden" name="jwt" id="f-jwt">
   <button class="btn" type="submit">Run the showdown</button>
-</form></div>
-{jobs_card}
+</form></div>"""
+
+
+def home_html():
+    with JOBS_LOCK:
+        active = [j for j in sorted(JOBS.values(), key=lambda x: -x["created"])
+                  if j["status"] in ("queued", "running")]
+    active_html = ""
+    if active:
+        rows = "".join(
+            f'<tr><td><a href="/job/{j["id"]}">{j["id"]}</a></td>'
+            f'<td>{html.escape(j["title"])}</td>'
+            f'<td><span class="tag {j["status"]}">{j["status"].upper()}</span></td></tr>'
+            for j in active)
+        active_html = (f'<div class="card" style="padding:16px 24px"><label>In progress</label>'
+                       f"<table>{rows}</table></div>")
+    cards = []
+    for e in scan_episodes():
+        thumb = (f'<img src="/media/{e["id"]}/{e["poster"]}" loading="lazy" alt="">'
+                 if e["poster"] else "")
+        badges = ""
+        if e["arena"]:
+            badges += '<span class="tag arena">ARENA ROUND</span>'
+        if e["web"]:
+            badges += '<span class="tag web">WEB</span>'
+        names = " · ".join(r["display"] for r in e["models"][:4])
+        cards.append(f"""
+<a class="feed-card" href="/watch/{e["id"]}">
+  <div class="thumb">{thumb}</div>
+  <div class="body">
+    <div class="t">{html.escape(e["title"])}</div>
+    <div class="m"><span>{len(e["models"])} models</span><span>${e["cost"]:.2f}</span>{badges}</div>
+    <div class="m" style="margin-top:2px">{html.escape(names)}</div>
+  </div>
+</a>""")
+    head = CLERK_BOOT.format(pk=json.dumps(CLERK_PK)) if CLERK_PK else ""
+    return page("Model Showdown", f"""
+<h1>Model Showdown</h1>
+<div class="sub">Same prompt · one shot each · real costs — generate a publish-ready
+side-by-side comparison, then browse every run below. All models served via AIHubMix.</div>
+{create_form_html()}
+{active_html}
+<h2>Runs</h2>
+<div class="feed">{"".join(cards) or '<div class="sub">nothing yet — create the first one above</div>'}</div>
 {KEY_SECTION_JS}""", head=head)
+
+
+def watch_html(e):
+    """Detail view: left = auto-playing works, right = pinned prompt/common info
+    + per-work params revealed on click."""
+    task_path = os.path.join(e["dir"], "task.md")
+    prompt_text = ""
+    if os.path.exists(task_path):
+        with open(task_path) as f:
+            prompt_text = f.read()
+    wall = None
+    mpath = os.path.join(e["dir"], "metrics.json")
+    if os.path.exists(mpath):
+        try:
+            with open(mpath) as f:
+                wall = json.load(f).get("wall_s")
+        except ValueError:
+            pass
+    accents = ["#38bdf8", "#f97316", "#a78bfa", "#22c55e", "#34d399", "#f472b6"]
+    works, detail = [], {}
+    for i, r in enumerate(e["models"]):
+        m = r["requested"]
+        cfg = run_showdown.MODELS.get(m, {})
+        rep_path = os.path.join(e["dir"], "recordings", f"report_{m}.json")
+        verdict = "SHIPPED"
+        if os.path.exists(rep_path):
+            try:
+                with open(rep_path) as f:
+                    rep = json.load(f)
+                verdict = ("FROZE" if rep.get("frozen")
+                           else "RAN W/ ERRORS" if rep.get("consoleErrors") else "SHIPPED")
+            except ValueError:
+                pass
+        u = r.get("usage", {}) or {}
+        rt = (u.get("completion_tokens_details") or {}).get("reasoning_tokens", 0)
+        ct = u.get("completion_tokens", 0)
+        detail[m] = {
+            "display": r["display"], "model": m, "accent": accents[i % len(accents)],
+            "protocol": PROTO.get(cfg.get("endpoint"), "OpenAI /v1/chat/completions"),
+            "params": cfg.get("params") or {}, "max_tokens": cfg.get("max_tokens"),
+            "latency_s": r.get("latency_s"), "cost": r.get("cost_usd"),
+            "prompt_tokens": u.get("prompt_tokens"), "completion_tokens": ct,
+            "reasoning_tokens": rt,
+            "reasoning_share": f"{rt / ct * 100:.0f}%" if ct and rt else "—",
+            "finish_reason": r.get("finish_reason"), "code_lines": r.get("code_lines"),
+            "verdict": verdict,
+            "raw": f"/media/{e['id']}/raw_{m}.json"
+                   if os.path.exists(os.path.join(e["dir"], f"raw_{m}.json")) else None,
+            "artifact": f"/media/{e['id']}/work_{m}.html"
+                        if os.path.exists(os.path.join(e["dir"], f"work_{m}", "index.html")) else None,
+        }
+        works.append(f"""
+<div class="work" data-m="{m}" id="w-{i}">
+  <video src="/media/{e["id"]}/{m}.webm" autoplay muted loop playsinline></video>
+  <div class="wh"><b><span class="dot" style="background:{accents[i % len(accents)]}"></span>
+  {html.escape(r["display"])}</b><span class="cost">${r.get("cost_usd", 0):.2f} · {r.get("latency_s", 0):.0f}s</span></div>
+</div>""")
+    n = len(works)
+    cols = 2 if n >= 2 else 1
+    common_rows = "".join(
+        f"<div><span>{k}</span><span>{html.escape(str(v))}</span></div>"
+        for k, v in [("episode", e["id"]), ("models", n),
+                     ("total cost", f"${e['cost']:.2f}"),
+                     ("wall time", f"{wall:.0f}s" if wall else "—"),
+                     ("created", time.strftime("%Y-%m-%d %H:%M", time.localtime(e["mtime"]))),
+                     ("gateway", "AIHubMix (one gateway, one shot each)")])
+    badges = ('<span class="tag arena">ARENA ROUND</span> ' if e["arena"] else "")
+    return page(e["title"], f"""
+<div class="sub" style="margin-bottom:12px"><a href="/">← all runs</a></div>
+<h1 style="font-size:26px">{html.escape(e["title"])}</h1>
+<div class="sub">{badges}click a work to inspect its params, response and wire protocol</div>
+<div class="watch">
+  <div class="works" style="grid-template-columns:repeat({cols},1fr)">{"".join(works)}</div>
+  <div class="side">
+    <div class="card">
+      <label>Prompt</label>
+      <pre class="prompt">{html.escape(prompt_text) or "—"}</pre>
+      <label>Run</label>
+      <div class="kv">{common_rows}</div>
+    </div>
+    <div class="card" id="sel-card">
+      <label>Selected work <span class="hint">click a video on the left</span></label>
+      <div class="kv" id="sel-kv"><div><span>—</span><span>nothing selected</span></div></div>
+      <div class="files" id="sel-links"></div>
+    </div>
+  </div>
+</div>
+<script>
+  const DETAIL = {json.dumps(detail)};
+  const works = document.querySelectorAll('.work');
+  function select(el) {{
+    works.forEach(w => w.classList.remove('sel'));
+    el.classList.add('sel');
+    const d = DETAIL[el.dataset.m];
+    const rows = [
+      ['model', d.model], ['display', d.display], ['protocol', d.protocol],
+      ['request params', Object.keys(d.params).length ? JSON.stringify(d.params) : '—'],
+      ['max_tokens', d.max_tokens ?? 'default'],
+      ['latency', d.latency_s != null ? d.latency_s + 's' : '—'],
+      ['cost', d.cost != null ? '$' + d.cost.toFixed(4) : '—'],
+      ['prompt tokens', d.prompt_tokens ?? '—'],
+      ['completion tokens', d.completion_tokens ?? '—'],
+      ['reasoning tokens', (d.reasoning_tokens || 0) + ' (' + d.reasoning_share + ')'],
+      ['finish_reason', d.finish_reason ?? '—'],
+      ['code lines', d.code_lines ?? '—'], ['verdict', d.verdict],
+    ];
+    document.getElementById('sel-kv').innerHTML = rows.map(([k, v]) =>
+      `<div><span>${{k}}</span><span>${{String(v).replace(/</g,'&lt;')}}</span></div>`).join('');
+    const links = [];
+    if (d.artifact) links.push(`<a href="${{d.artifact}}" target="_blank" rel="noopener">artifact ↗</a>`);
+    if (d.raw) links.push(`<a href="${{d.raw}}" target="_blank" rel="noopener">raw response ↗</a>`);
+    document.getElementById('sel-links').innerHTML = links.join('');
+    document.querySelector('#sel-card label').firstChild.textContent = d.display + ' ';
+  }}
+  works.forEach(w => w.addEventListener('click', () => select(w)));
+  if (works.length) select(works[0]);
+</script>""")
 
 
 def job_html(job):
@@ -272,6 +549,9 @@ def job_html(job):
     body = [f'<h1>Job {job["id"]}</h1>',
             f'<div class="sub">{html.escape(job["title"])} · '
             f'<span class="tag {st}">{st.upper()}</span></div>']
+    if st == "done":
+        body.append(f'<div class="card">Done — <a href="/watch/web/{job["id"]}">watch it ↗</a> '
+                    f"or grab the share pack below.</div>")
     if job["auth_mode"] == "account" and st in ("queued", "running"):
         body.append('<div class="card" style="padding:14px 24px"><span class="hint" style="margin:0">'
                     'account-key job: keep this page open — it refreshes the short-lived '
@@ -298,7 +578,7 @@ def job_html(job):
                         for n in files)
         body.append(f'<div class="card"><label>Share pack</label>'
                     f'<div class="files">{links}</div></div>')
-    body.append('<div class="sub"><a href="/">← new showdown</a></div>')
+    body.append('<div class="sub"><a href="/">← home</a></div>')
     refresh = 5 if st in ("queued", "running") else None
     head = ""
     if job["auth_mode"] == "account" and st in ("queued", "running") and CLERK_PK:
@@ -363,14 +643,21 @@ def worker():
 
 # ---------- http ----------
 
+MEDIA_TYPES = {".webm": "video/webm", ".mp4": "video/mp4", ".png": "image/png",
+               ".json": "application/json", ".md": "text/plain; charset=utf-8",
+               ".html": "text/html; charset=utf-8", ".wav": "audio/wav"}
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "showdown-web"
 
-    def _send(self, code, body, ctype="text/html; charset=utf-8"):
+    def _send(self, code, body, ctype="text/html; charset=utf-8", extra=None):
         data = body.encode() if isinstance(body, str) else body
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(data)))
+        for k, v in (extra or {}).items():
+            self.send_header(k, v)
         self.end_headers()
         self.wfile.write(data)
 
@@ -399,6 +686,29 @@ class Handler(BaseHTTPRequestHandler):
                 for k in (body.get("data") or []) if k.get("status") in (None, 1)]
         return self._send(200, json.dumps(keys), "application/json")
 
+    def _media(self, rest):
+        """/media/<ep-id>/<file> — recordings first, then episode root; whitelisted
+        types only; realpath must stay inside episodes/ (no traversal)."""
+        name = os.path.basename(urllib.parse.unquote(rest[-1]))
+        ep_id = "/".join(rest[:-1])
+        ep_dir = os.path.realpath(os.path.join(EPISODES_DIR, ep_id))
+        if not ep_dir.startswith(os.path.realpath(EPISODES_DIR) + os.sep):
+            return self._send(404, "not found", "text/plain")
+        ext = os.path.splitext(name)[1]
+        if ext not in MEDIA_TYPES or name.startswith("."):
+            return self._send(404, "not found", "text/plain")
+        m = re.fullmatch(r"work_(.+)\.html", name)
+        candidates = ([os.path.join(ep_dir, f"work_{m.group(1)}", "index.html")] if m else
+                      [os.path.join(ep_dir, "recordings", name), os.path.join(ep_dir, name)])
+        for path in candidates:
+            if os.path.exists(path) and os.path.realpath(path).startswith(ep_dir + os.sep):
+                with open(path, "rb") as f:
+                    # artifact html 走 sandbox 头，别给它同源权力
+                    extra = ({"Content-Security-Policy": "sandbox allow-scripts allow-pointer-lock"}
+                             if m else {"Cache-Control": "max-age=3600"})
+                    return self._send(200, f.read(), MEDIA_TYPES[ext], extra)
+        return self._send(404, "not found", "text/plain")
+
     def do_GET(self):
         parts = self.path.split("?")[0].strip("/").split("/")
         if self.path == "/" or self.path == "":
@@ -407,6 +717,13 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, "ok", "text/plain")
         if parts[0] == "api" and len(parts) == 2 and parts[1] == "keys":
             return self._proxy_keys()
+        if parts[0] == "media" and len(parts) >= 3:
+            return self._media(parts[1:])
+        if parts[0] == "watch" and len(parts) >= 2:
+            e = find_episode("/".join(parts[1:]))
+            if not e:
+                return self._send(404, page("Not found", "<h1>run not found</h1>"))
+            return self._send(200, watch_html(e))
         if parts[0] == "job" and len(parts) >= 2:
             with JOBS_LOCK:
                 job = JOBS.get(parts[1])
@@ -419,12 +736,9 @@ class Handler(BaseHTTPRequestHandler):
                 path = os.path.join(job["ep_dir"], "dist", name)
                 if not os.path.exists(path):
                     return self._send(404, page("Not found", "<h1>file not found</h1>"))
-                ctype = ("video/mp4" if name.endswith(".mp4") else
-                         "image/png" if name.endswith(".png") else
-                         "application/json" if name.endswith(".json") else
-                         "text/plain; charset=utf-8")
+                ext = os.path.splitext(name)[1]
                 with open(path, "rb") as f:
-                    return self._send(200, f.read(), ctype)
+                    return self._send(200, f.read(), MEDIA_TYPES.get(ext, "application/octet-stream"))
         return self._send(404, page("Not found", "<h1>404</h1>"))
 
     def do_POST(self):
@@ -469,6 +783,8 @@ class Handler(BaseHTTPRequestHandler):
         os.makedirs(ep_dir, exist_ok=True)
         with open(os.path.join(ep_dir, "task.md"), "w") as f:
             f.write(prompt + "\n")
+        with open(os.path.join(ep_dir, "meta.json"), "w") as f:
+            json.dump({"title": title}, f, ensure_ascii=False)
         job = {"id": job_id, "ep_dir": ep_dir, "models": ",".join(models),
                "seconds": seconds, "title": title, "status": "queued",
                "created": time.time(), "auth_mode": auth_mode,
