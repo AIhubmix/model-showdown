@@ -88,7 +88,16 @@ CSS = """
 }
 * { box-sizing:border-box; }
 body { margin:0; background:var(--ah-bg); color:var(--ah-fg-2);
-  font-family:var(--ah-font-body); font-size:16px; line-height:1.55; }
+  font-family:var(--ah-font-body); font-size:16px; line-height:1.55;
+  touch-action:manipulation; }
+/* 键盘可达性：所有可交互元素统一 focus ring（playground .ah-topnav 同款） */
+:is(a,button,input,select,textarea,[tabindex]):focus-visible {
+  outline:none; box-shadow:0 0 0 3px rgba(37,99,235,0.3); }
+button { cursor:pointer; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition-duration:0.01ms !important;
+    animation-duration:0.01ms !important; }
+}
 .wrap { max-width:1080px; margin:0 auto; padding:40px 24px 80px; }
 h1 { font-family:var(--ah-font-display); font-size:32px; color:var(--ah-fg-1);
   font-weight:700; margin:0 0 4px; }
@@ -120,7 +129,8 @@ textarea { min-height:110px; font-family:var(--ah-font-mono); font-size:13px; re
   font-weight:600; font-family:var(--ah-font-body); cursor:pointer; margin-top:20px;
   transition:background 120ms var(--ah-ease); }
 .btn:hover { background:var(--ah-primary-hover); }
-.btn:active { background:var(--ah-primary-pressed); }
+.btn:active { background:var(--ah-primary-pressed); transform:scale(0.98); }
+.btn:disabled { opacity:0.5; cursor:default; transform:none; }
 .btn2 { display:inline-flex; align-items:center; background:var(--ah-card);
   color:var(--ah-primary); border:1px solid var(--ah-primary); border-radius:8px;
   padding:8px 16px; font-size:14px; font-weight:600; cursor:pointer;
@@ -440,14 +450,19 @@ KEY_SECTION_JS = """
       form.appendChild(inp);
     });
   }
+  function submitLoading(form) {   // loading-buttons：异步期间禁用并给反馈
+    const btn = form.querySelector('button[type=submit]');
+    btn.disabled = true; btn.textContent = 'Queuing…';
+  }
   document.getElementById('showdown-form').addEventListener('submit', async (e) => {
     syncModels(e.target);
-    if (authMode !== 'account') return;           // manual: plain POST（带 hidden inputs）
+    if (authMode !== 'account') { submitLoading(e.target); return; }  // manual: plain POST
     e.preventDefault();
     const clerk = window._clerk;
     if (!clerk?.user) { alert('sign in first, or switch to "Paste a key"'); return; }
     document.getElementById('f-token-id').value = $('key-select').value;
     document.getElementById('f-jwt').value = await clerk.session.getToken();
+    submitLoading(e.target);
     e.target.submit();
   });
 
@@ -498,8 +513,8 @@ KEY_SECTION_JS = """
   const dz = $('dropzone'), previews = $('ref-previews'), fileInput = $('ref-file');
   function renderRefs() {
     previews.innerHTML = refs.map((d, i) => `
-      <span class="ref-item"><img src="${d}" alt="ref ${i}">
-        <button type="button" data-i="${i}" title="remove">×</button></span>`).join('');
+      <span class="ref-item"><img src="${d}" alt="reference image ${i + 1}">
+        <button type="button" data-i="${i}" title="remove" aria-label="remove reference image ${i + 1}">×</button></span>`).join('');
     $('drop-hint').textContent = refs.length
       ? `${refs.length}/${MAX_REFS} attached — drop/paste/click to add more`
       : 'drop images here, paste, or click to browse';
@@ -527,7 +542,7 @@ KEY_SECTION_JS = """
   async function draftPrompt() {
     if (manualEdited && ta.value.trim()) return;
     const prev = ta.value;
-    ta.value = '⏳ drafting a build prompt from your reference image…';
+    ta.value = 'Drafting a build prompt from your reference image…';
     const body = { image: refs[0] };
     if (authMode === 'account' && window._clerk?.user) {
       body.jwt = await window._clerk.session.getToken();
@@ -562,6 +577,9 @@ KEY_SECTION_JS = """
     }
   }
   dz.addEventListener('click', (ev) => { if (ev.target.tagName !== 'BUTTON') fileInput.click(); });
+  dz.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); fileInput.click(); }
+  });
   fileInput.addEventListener('change', () => { addFiles(fileInput.files); fileInput.value = ''; });
   previews.addEventListener('click', (ev) => {
     if (ev.target.tagName === 'BUTTON') { refs.splice(+ev.target.dataset.i, 1); renderRefs(); }
@@ -605,7 +623,8 @@ def create_form_html(prefill=""):
   <div id="ref-section" hidden>
     <label>Reference images <span class="hint">every selected model supports image
     input · drop / paste / click · up to 3 · dropping one auto-drafts the prompt below</span></label>
-    <div class="dropzone" id="dropzone">
+    <div class="dropzone" id="dropzone" role="button" tabindex="0"
+         aria-label="Upload reference images: drop, paste, or press Enter to browse">
       <span class="hint" style="margin:0" id="drop-hint">drop images here, paste, or click to browse</span>
       <div class="ref-previews" id="ref-previews"></div>
       <input type="file" id="ref-file" accept="image/png,image/jpeg,image/webp" multiple hidden>
@@ -657,8 +676,8 @@ def home_html(prefill=""):
                        f"<table>{rows}</table></div>")
     cards = []
     for e in scan_episodes():
-        thumb = (f'<img src="/media/{e["id"]}/{e["poster"]}" loading="lazy" alt="">'
-                 if e["poster"] else "")
+        thumb = (f'<img src="/media/{e["id"]}/{e["poster"]}" loading="lazy" '
+                 f'alt="{html.escape(e["title"])} poster">' if e["poster"] else "")
         badges = ""
         if e["arena"]:
             badges += '<span class="tag arena">ARENA ROUND</span>'
@@ -736,8 +755,10 @@ def watch_html(e):
                         if os.path.exists(os.path.join(e["dir"], f"work_{m}", "index.html")) else None,
         }
         works.append(f"""
-<div class="work" data-m="{m}" id="w-{i}">
-  <video src="/media/{e["id"]}/{m}.webm" autoplay muted loop playsinline></video>
+<div class="work" data-m="{m}" id="w-{i}" role="button" tabindex="0"
+     aria-label="inspect {html.escape(r["display"])} details">
+  <video src="/media/{e["id"]}/{m}.webm" autoplay muted loop playsinline
+         aria-label="{html.escape(r["display"])} artifact recording"></video>
   <div class="wh"><b><span class="dot" style="background:{accents[i % len(accents)]}"></span>
   {html.escape(r["display"])}</b><span class="cost">${r.get("cost_usd", 0):.2f} · {r.get("latency_s", 0):.0f}s</span></div>
 </div>""")
@@ -838,7 +859,12 @@ def watch_html(e):
     document.getElementById('sel-links').innerHTML = links.join('');
     document.querySelector('#sel-card label').firstChild.textContent = d.display + ' ';
   }}
-  works.forEach(w => w.addEventListener('click', () => select(w)));
+  works.forEach(w => {{
+    w.addEventListener('click', () => select(w));
+    w.addEventListener('keydown', (ev) => {{
+      if (ev.key === 'Enter' || ev.key === ' ') {{ ev.preventDefault(); select(w); }}
+    }});
+  }});
   if (works.length) select(works[0]);
   document.getElementById('copy-prompt').addEventListener('click', async (ev) => {{
     await navigator.clipboard.writeText(document.getElementById('prompt-text').textContent);
