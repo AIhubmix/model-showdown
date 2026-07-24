@@ -37,10 +37,9 @@ if os.path.exists(CONFIG_PATH):
 
 GATEWAY = CONFIG.get("gateway", "https://aihubmix.com/v1/chat/completions")
 API_KEY_ENV = CONFIG.get("api_key_env", "AIHUBMIX_API_KEY")
+# key 校验放在 main() 里而非 import 时：webapp 等调用方需要无 key 也能 import
+# 读 MODELS/PRICING（BYOK 的 key 是每个任务经环境变量传给子进程的）
 API_KEY = os.environ.get(API_KEY_ENV)
-if not API_KEY:
-    sys.exit(f"missing API key: export {API_KEY_ENV}=sk-... "
-             f"(any OpenAI-compatible gateway works; default is aihubmix.com)")
 
 # USD per 1M tokens (input, output)
 PRICING = {
@@ -833,6 +832,9 @@ def main():
     ap.add_argument("--rec-size", metavar="WxH", default="720x960",
                     help="录屏视口。横屏内容(赛车/宽场景)用 1280x720，默认 720x960 竖屏")
     args = ap.parse_args()
+    if not API_KEY:
+        sys.exit(f"missing API key: export {API_KEY_ENV}=sk-... "
+                 f"(any OpenAI-compatible gateway works; default is aihubmix.com)")
     try:
         rec_w, rec_h = (int(x) for x in args.rec_size.lower().split("x"))
     except ValueError:

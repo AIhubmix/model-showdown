@@ -127,6 +127,31 @@ unknown parameters, so acceptance alone proves nothing.
 Brand logo and tagline are composition props (`video/src/Root.tsx` defaults) —
 swap in your own.
 
+## Web UI (self-hosted)
+
+```bash
+python3 webapp.py            # http://127.0.0.1:7788
+```
+
+A dependency-free submit page: paste a prompt, pick models, run — jobs queue
+sequentially (recording needs the GPU to itself) and land in `episodes/web/`,
+with the share pack downloadable from the job page. Visitors paste their own
+gateway key (kept in memory for the job only, never stored); if the server has
+`AIHUBMIX_API_KEY` set the field can stay empty. Binds localhost — put real
+auth in front before exposing it.
+
+## Feeding a round back into the arena gallery
+
+```bash
+python3 submit_round.py episodes/epNN --title "Round title"
+```
+
+Copies the artifacts + posters into `docs/`, appends a blind round to
+`docs/rounds.js` (slot letters shuffled so position never leaks identity), and
+auto-fills cost/time from metrics. Edit the `TODO` notes, review locally, then
+commit & push to publish. External contributors: run it and open a PR with the
+`docs/` diff.
+
 ## Claude Code skill (optional autopilot)
 
 The repo ships a [Claude Code](https://claude.com/claude-code) skill at
