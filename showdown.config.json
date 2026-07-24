@@ -9,7 +9,8 @@
   "web": {
     "clerk_publishable_key": "pk_live_Y2xlcmsuYWlodWJtaXguY29tJA",
     "server_domain": "https://aihubmix.com",
-    "gcs_bucket": "aihubmix-showdown"
+    "gcs_bucket": "aihubmix-showdown",
+    "caption_model": "qwen3-vl-flash"
   },
   "models": {},
   "pricing": {}

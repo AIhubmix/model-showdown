@@ -48,6 +48,19 @@ CLERK_PK = os.environ.get("SHOWDOWN_CLERK_PK") or _web_cfg.get("clerk_publishabl
 SERVER_DOMAIN = (os.environ.get("SHOWDOWN_SERVER_DOMAIN")
                  or _web_cfg.get("server_domain", "https://aihubmix.com")).rstrip("/")
 GCS_BUCKET = os.environ.get("SHOWDOWN_GCS_BUCKET") or _web_cfg.get("gcs_bucket", "")
+CAPTION_MODEL = os.environ.get("SHOWDOWN_CAPTION_MODEL") or _web_cfg.get("caption_model", "gpt-4o-mini")
+
+# 参考图 → 生成 build prompt 的指令：核心是"还原"——布局/配色/材质/动效逐条钉死
+CAPTION_INSTRUCTION = """You are a meticulous visual analyst helping write a build brief for a coding exercise. First, study the attached image and describe exactly what it shows. Then write that up as a prompt asking a model to build a similar scene/interface as ONE self-contained HTML file.
+
+The prompt you write must:
+1) Lay out the structure: every visible element/object, its position and proportions in the frame.
+2) Pin down the visual system in implementation-ready detail — color palette (hex codes), typography, spacing, materials, lighting, shadows, glow. The goal is that the result closely matches the image, so explicitly call out framing, proportions, and details that are easy to get wrong.
+3) Specify motion: what should animate and how; require an auto-demo that starts by itself ~1s after load with no user input.
+4) Technical constraints: single self-contained HTML file, no external assets.
+5) End with exactly: Return ONLY the complete HTML file in a single ```html code block.
+
+Output just the prompt text, no preamble, no commentary."""
 
 JOBS = {}          # id -> job dict (manual keys held in memory only, never persisted)
 JOBS_LOCK = threading.Lock()
@@ -453,6 +466,12 @@ KEY_SECTION_JS = """
         <code>${m.id}${m.input || m.output ? ` · $${m.input}/${m.output}` : ''}</code></label>`
     ).join('') || '<span class="hint" style="margin:0">no match</span>';
   }
+  // 参考图区仅当「已选模型全部支持图片输入」时展示（先选模型，再给图）
+  function updateRefSection() {
+    const ms = [...checked].map(id => MODELS.find(x => x.id === id));
+    document.getElementById('ref-section').hidden =
+      !(checked.size > 0 && ms.every(m => m && m.image));
+  }
   list.addEventListener('change', (ev) => {
     const cb = ev.target;
     if (cb.checked && checked.size >= MAX_PICK) {
@@ -461,6 +480,7 @@ KEY_SECTION_JS = """
       return;
     }
     cb.checked ? checked.add(cb.value) : checked.delete(cb.value);
+    updateRefSection();
   });
   document.getElementById('model-search').addEventListener('input',
     (ev) => renderModels(ev.target.value));
@@ -468,6 +488,7 @@ KEY_SECTION_JS = """
     MODELS = ms;
     ms.filter(m => m.default).forEach(m => checked.add(m.id));
     renderModels('');
+    updateRefSection();
   }).catch(() => { list.innerHTML = '<span class="hint" style="margin:0">catalog unavailable</span>'; });
 
   // ---- reference images: drag & drop / paste / browse -> base64 hidden inputs ----
@@ -498,13 +519,45 @@ KEY_SECTION_JS = """
       }
     });
   };
+  // 拖图立刻起草 prompt：便宜视觉模型看图写还原型 build brief，可随意手改；
+  // 用户手动改过且非空时不覆盖
+  const ta = document.querySelector('textarea[name=prompt]');
+  let manualEdited = !!ta.value.trim();
+  ta.addEventListener('input', () => { manualEdited = true; });
+  async function draftPrompt() {
+    if (manualEdited && ta.value.trim()) return;
+    const prev = ta.value;
+    ta.value = '⏳ drafting a build prompt from your reference image…';
+    const body = { image: refs[0] };
+    if (authMode === 'account' && window._clerk?.user) {
+      body.jwt = await window._clerk.session.getToken();
+      body.token_id = $('key-select')?.value || '';
+    } else {
+      const k = document.querySelector('input[name=api_key]').value.trim();
+      if (k) body.key = k;
+    }
+    try {
+      const r = await fetch('/api/caption', { method: 'POST',
+        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const d = await r.json();
+      if (!r.ok || !d.prompt) throw new Error(d.error || ('HTTP ' + r.status));
+      ta.value = d.prompt;
+      manualEdited = false;
+    } catch (e) {
+      ta.value = prev;
+      alert('prompt drafting failed: ' + e.message + ' — write it manually');
+    }
+  }
   function addFiles(fileList) {
     for (const f of fileList) {
       if (!/^image\\/(png|jpeg|webp)$/.test(f.type)) continue;
       if (refs.length >= MAX_REFS) { alert(`up to ${MAX_REFS} reference images`); break; }
       if (f.size > MAX_REF_MB * 1024 * 1024) { alert(`${f.name}: over ${MAX_REF_MB}MB`); continue; }
       const rd = new FileReader();
-      rd.onload = () => { refs.push(rd.result); renderRefs(); };
+      rd.onload = () => {
+        refs.push(rd.result); renderRefs();
+        if (refs.length === 1) draftPrompt();
+      };
       rd.readAsDataURL(f);
     }
   }
@@ -542,16 +595,6 @@ def create_form_html(prefill=""):
                        if os.environ.get(KEY_ENV) else "")
     return f"""
 <div class="card" id="create"><form method="post" action="/submit" id="showdown-form">
-  <label>Prompt <span class="hint">what should every model build? single-file HTML
-  with an auto-demo works best</span></label>
-  <textarea name="prompt" required placeholder="Build a playable ... as one self-contained HTML file ...">{html.escape(prefill)}</textarea>
-  <label>Reference images <span class="hint">optional · drag &amp; drop / paste /
-  click · sent to every model as multimodal input · up to 3</span></label>
-  <div class="dropzone" id="dropzone">
-    <span class="hint" style="margin:0" id="drop-hint">drop images here, paste, or click to browse</span>
-    <div class="ref-previews" id="ref-previews"></div>
-    <input type="file" id="ref-file" accept="image/png,image/jpeg,image/webp" multiple hidden>
-  </div>
   <label>Models <span class="hint">live catalog (/api/v1/models) · tuned lineup pinned
   first · pick up to 4<span id="vision-note" hidden> · <b>ref images attached — models
   without image input are disabled</b></span></span></label>
@@ -559,6 +602,18 @@ def create_form_html(prefill=""):
   <div class="models" id="model-list" style="max-height:264px;overflow:auto;margin-top:8px">
     <span class="hint" style="margin:0">loading catalog…</span>
   </div>
+  <div id="ref-section" hidden>
+    <label>Reference images <span class="hint">every selected model supports image
+    input · drop / paste / click · up to 3 · dropping one auto-drafts the prompt below</span></label>
+    <div class="dropzone" id="dropzone">
+      <span class="hint" style="margin:0" id="drop-hint">drop images here, paste, or click to browse</span>
+      <div class="ref-previews" id="ref-previews"></div>
+      <input type="file" id="ref-file" accept="image/png,image/jpeg,image/webp" multiple hidden>
+    </div>
+  </div>
+  <label>Prompt <span class="hint">what should every model build? single-file HTML
+  with an auto-demo works best — auto-drafted from your reference image, edit freely</span></label>
+  <textarea name="prompt" required placeholder="Build a playable ... as one self-contained HTML file ...">{html.escape(prefill)}</textarea>
   <div class="row">
     <div><label>Title <span class="hint">shown on the scoreboard</span></label>
     <input type="text" name="title" placeholder="Model Showdown"></div>
@@ -688,30 +743,30 @@ def watch_html(e):
 </div>""")
     n = len(works)
     cols = 2 if n >= 2 else 1
+    # 分享区：mp4 只从本站下载（无公网直链，防盗链/滥用）；分享按钮带文案+画廊
+    # 链接，视频由用户下载后在发帖页自行附上
     gcs_html = ""
-    meta_path = os.path.join(e["dir"], "meta.json")
-    if os.path.exists(meta_path):
-        try:
-            with open(meta_path) as f:
-                gcs = json.load(f).get("gcs") or {}
-            vids = [(nm, u) for nm, u in gcs.get("files", []) if nm.endswith(".mp4")]
-            if vids:
-                share_text = urllib.parse.quote(f"{e['title']} — same prompt, one shot each. "
-                                                f"The bill is real. {vids[0][1]}")
-                share_btns = (
-                    f'<a class="btn2" style="padding:5px 12px;font-size:12.5px" target="_blank" '
-                    f'rel="noopener" href="https://twitter.com/intent/tweet?text={share_text}">Share on X</a>'
-                    f'<a class="btn2" style="padding:5px 12px;font-size:12.5px" target="_blank" '
-                    f'rel="noopener" href="https://www.reddit.com/submit?url='
-                    f'{urllib.parse.quote(vids[0][1])}&title={urllib.parse.quote(e["title"])}">Post to Reddit</a>')
-                gcs_html = ('<label style="display:flex;align-items:center;justify-content:space-between">'
-                            f'Share <span style="display:flex;gap:8px">{share_btns}</span></label>'
-                            '<div class="files">'
-                            + "".join(f'<a href="{u}" target="_blank" rel="noopener">'
-                                      f"{html.escape(nm)} ↗</a>" for nm, u in vids)
-                            + "</div>")
-        except ValueError:
-            pass
+    dist_dir = os.path.join(e["dir"], "dist")
+    vids = sorted(f for f in os.listdir(dist_dir)) if os.path.isdir(dist_dir) else []
+    vids = [f for f in vids if f.endswith(".mp4")]
+    if vids:
+        gallery = run_showdown.CONFIG.get("brand", {}).get(
+            "gallery", "https://aihubmix.github.io/model-showdown/")
+        share_text = urllib.parse.quote(
+            f"{e['title']} — same prompt, one shot each. The bill is real. {gallery}")
+        share_btns = (
+            f'<a class="btn2" style="padding:5px 12px;font-size:12.5px" target="_blank" '
+            f'rel="noopener" href="https://twitter.com/intent/tweet?text={share_text}">Share on X</a>'
+            f'<a class="btn2" style="padding:5px 12px;font-size:12.5px" target="_blank" '
+            f'rel="noopener" href="https://www.reddit.com/submit?url={urllib.parse.quote(gallery)}'
+            f'&title={urllib.parse.quote(e["title"])}">Post to Reddit</a>')
+        gcs_html = ('<label style="display:flex;align-items:center;justify-content:space-between">'
+                    f'Share <span style="display:flex;gap:8px">{share_btns}</span></label>'
+                    '<div class="files">'
+                    + "".join(f'<a href="/media/{e["id"]}/{urllib.parse.quote(nm)}" download>'
+                              f"⬇ {html.escape(nm)}</a>" for nm in vids)
+                    + '</div><span class="hint" style="margin:0">download the mp4, attach it '
+                    'when you post — videos are never exposed as public URLs</span>')
     ref_html = ""
     ref_files = sorted(os.path.basename(p) for p in glob.glob(os.path.join(e["dir"], "ref*"))
                        if os.path.splitext(p)[1].lower() in (".png", ".jpg", ".jpeg", ".webp"))
@@ -828,10 +883,9 @@ def job_html(job):
         body.append(f'<div class="card"><label>Share pack</label>'
                     f'<div class="files">{links}</div></div>')
         if job.get("gcs"):
-            gcs_links = "".join(f'<a href="{u}" target="_blank" rel="noopener">{html.escape(n)} ↗</a>'
-                                for n, u in job["gcs"])
-            body.append(f'<div class="card"><label>GCS <span class="hint">public URLs — '
-                        f'paste anywhere</span></label><div class="files">{gcs_links}</div></div>')
+            body.append('<div class="card" style="padding:14px 24px"><span class="hint" '
+                        'style="margin:0">archived to GCS (private bucket — videos are never '
+                        'exposed as public URLs)</span></div>')
     body.append('<div class="sub"><a href="/">← home</a></div>')
     refresh = 5 if st in ("queued", "running") else None
     head = ""
@@ -1001,8 +1055,15 @@ class Handler(BaseHTTPRequestHandler):
                 for k in (body.get("data") or []) if k.get("status") in (None, 1)]
         return self._send(200, json.dumps(keys), "application/json")
 
+    def _same_site(self):
+        """视频防盗链（MVP 级）：Referer 必须是本站页面——直贴 URL、外站 <video>
+        嵌入都拿不到。正式部署换签名 URL/签名 Cookie。"""
+        ref = self.headers.get("Referer", "")
+        host = self.headers.get("Host", "")
+        return bool(host) and urllib.parse.urlparse(ref).netloc == host
+
     def _media(self, rest):
-        """/media/<ep-id>/<file> — recordings first, then episode root; whitelisted
+        """/media/<ep-id>/<file> — recordings first, then episode root/dist; whitelisted
         types only; realpath must stay inside episodes/ (no traversal)."""
         name = os.path.basename(urllib.parse.unquote(rest[-1]))
         ep_id = "/".join(rest[:-1])
@@ -1012,9 +1073,13 @@ class Handler(BaseHTTPRequestHandler):
         ext = os.path.splitext(name)[1]
         if ext not in MEDIA_TYPES or name.startswith("."):
             return self._send(404, "not found", "text/plain")
+        if ext in (".mp4", ".webm") and not self._same_site():
+            return self._send(403, "videos are only served to this site's own pages",
+                              "text/plain")
         m = re.fullmatch(r"work_(.+)\.html", name)
         candidates = ([os.path.join(ep_dir, f"work_{m.group(1)}", "index.html")] if m else
-                      [os.path.join(ep_dir, "recordings", name), os.path.join(ep_dir, name)])
+                      [os.path.join(ep_dir, "recordings", name), os.path.join(ep_dir, name),
+                       os.path.join(ep_dir, "dist", name)])
         for path in candidates:
             if os.path.exists(path) and os.path.realpath(path).startswith(ep_dir + os.sep):
                 with open(path, "rb") as f:
@@ -1065,14 +1130,61 @@ class Handler(BaseHTTPRequestHandler):
                 if not os.path.exists(path):
                     return self._send(404, page("Not found", "<h1>file not found</h1>"))
                 ext = os.path.splitext(name)[1]
+                if ext in (".mp4", ".webm") and not self._same_site():
+                    return self._send(403, "videos are only served to this site's own pages",
+                                      "text/plain")
                 with open(path, "rb") as f:
-                    return self._send(200, f.read(), MEDIA_TYPES.get(ext, "application/octet-stream"))
+                    return self._send(200, f.read(), MEDIA_TYPES.get(ext, "application/octet-stream"),
+                                      {"Content-Disposition": f'attachment; filename="{name}"'}
+                                      if ext == ".mp4" else None)
         return self._send(404, page("Not found", "<h1>404</h1>"))
 
     def do_POST(self):
         parts = self.path.strip("/").split("/")
         length = int(self.headers.get("Content-Length", 0))
         raw = self.rfile.read(length)
+
+        # 参考图 → build prompt（便宜视觉模型看图起草，还原优先）
+        if len(parts) == 2 and parts[0] == "api" and parts[1] == "caption":
+            try:
+                body = json.loads(raw)
+            except ValueError:
+                return self._send(400, '{"error":"bad json"}', "application/json")
+            img = decode_ref_image(str(body.get("image", "")))
+            if not img:
+                return self._send(400, '{"error":"invalid image"}', "application/json")
+            ext, data = img
+            import base64
+            data_url = f"data:image/{'jpeg' if ext == 'jpg' else ext};base64," \
+                       f"{base64.b64encode(data).decode()}"
+            jwt, token_id, key = (str(body.get(k, "")) for k in ("jwt", "token_id", "key"))
+            if jwt and token_id:
+                auth = {"Authorization": f"Bearer {jwt}", "X-Pg-Token-Id": token_id}
+            elif key or os.environ.get(KEY_ENV):
+                auth = {"Authorization": f"Bearer {key or os.environ[KEY_ENV]}"}
+            else:
+                return self._send(401, '{"error":"no key available"}', "application/json")
+            payload = {"model": CAPTION_MODEL, "max_tokens": 1200,
+                       "messages": [{"role": "user", "content": [
+                           {"type": "text", "text": CAPTION_INSTRUCTION},
+                           {"type": "image_url", "image_url": {"url": data_url}}]}]}
+            req = urllib.request.Request(
+                f"{SERVER_DOMAIN}/v1/chat/completions",
+                data=json.dumps(payload).encode(),
+                headers={"Content-Type": "application/json", **auth})
+            try:
+                with urllib.request.urlopen(req, timeout=90) as r:
+                    resp = json.load(r)
+                text = (resp.get("choices") or [{}])[0].get("message", {}).get("content") or ""
+            except urllib.error.HTTPError as e:
+                return self._send(e.code, json.dumps({"error": f"upstream {e.code}"}),
+                                  "application/json")
+            except Exception as e:  # noqa: BLE001
+                return self._send(502, json.dumps({"error": str(e)[:200]}), "application/json")
+            if not text.strip():
+                return self._send(502, '{"error":"empty caption"}', "application/json")
+            return self._send(200, json.dumps({"prompt": text.strip()}, ensure_ascii=False),
+                              "application/json")
 
         # 任务页推新 JWT：只更新 jwt，token_id 以服务端任务记录为准（防篡改）
         if len(parts) == 3 and parts[0] == "job" and parts[2] == "token":
